@@ -1,0 +1,9 @@
+{
+  "date": "2026-08-18",
+  "provider": "mock",
+  "physics": "kinematic-fallback",
+  "episodes": 100,
+  "successes": 100,
+  "success_rate": 1.0,
+  "note": "Local validation without the mujoco wheel. Run pytest in the Docker image to validate the same task with MuJoCo physics."
+}

@@ -1,0 +1,16 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    environment:
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-mock}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-robotics-er-2-preview}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      MUJOCO_GL: osmesa
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/runs:/app/data/runs
+    restart: unless-stopped
