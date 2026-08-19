@@ -1,0 +1,13 @@
+{
+  "date": "2026-08-19",
+  "mujoco_version": "3.11.0",
+  "provider": "mock",
+  "physics": "mujoco",
+  "control_mode": "actuator-mj_step",
+  "arm_actuators": 7,
+  "finger_actuators": 2,
+  "episodes": 100,
+  "successes": 100,
+  "success_rate": 1.0,
+  "tests": "12 passed, 1 external Gemini test skipped"
+}

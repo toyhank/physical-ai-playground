@@ -15,7 +15,8 @@ receives the key.
 - Safety-gated normalized image-coordinate tools
 - Pinhole camera projection and table-plane unprojection
 - Damped-least-squares arm IK with joint limits
-- MuJoCo MJCF scene, plus a deterministic kinematic fallback for lightweight dev
+- MuJoCo MJCF scene with 9 position actuators, `mj_step` control, finger contacts,
+  plus a deterministic kinematic fallback for lightweight development
 - Simulator-ground-truth task verification and JSONL run logs
 - Mock and Gemini Robotics ER 2 providers behind the same orchestration interface
 - Unit, integration, randomized pick-and-place, and opt-in external API tests
@@ -87,10 +88,9 @@ server/.venv/Scripts/python.exe scripts/benchmark_mock.py
 npm run build
 ```
 
-The checked-in local fallback benchmark is
-[`benchmarks/deterministic-fallback.json`](benchmarks/deterministic-fallback.json):
-100/100 successful randomized resets. It is explicitly not a MuJoCo result.
-Re-run the same benchmark in the container to validate the installed MuJoCo path.
+The checked-in benchmarks distinguish the lightweight fallback from the native
+MuJoCo actuator path. [`benchmarks/mujoco-actuator.json`](benchmarks/mujoco-actuator.json)
+records 100/100 successful randomized resets using 9 actuators and `mj_step`.
 External Gemini tests are opt-in:
 
 ```powershell
@@ -129,8 +129,8 @@ stop, and per-IP task rate limits.
 
 - Local UI build and real HTTP/WebSocket mock task: passed
 - Projection, IK, safety, orchestration, API lifecycle: passed
-- Randomized deterministic fallback: 100/100
+- Native MuJoCo 3.11 actuator benchmark: 100/100 randomized resets
+- 7 arm position actuators + 2 finger actuators; state advances through `mj_step`
 - Gemini access/spatial/function-call smoke test: passed on the developer account
-- MuJoCo benchmark and 20-run Gemini reliability benchmark: scripts/interfaces are
-  ready, but those results are not claimed until run in the target container and
+- 20-run Gemini reliability benchmark is not claimed until run in the target
   billing environment

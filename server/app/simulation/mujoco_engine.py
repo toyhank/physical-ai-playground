@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+import atexit
 import io
 import random
 from dataclasses import dataclass
+from queue import Queue
+from threading import Event, RLock, Thread
 from typing import Any
 
 import numpy as np
@@ -11,6 +14,9 @@ from PIL import Image, ImageDraw
 
 from app.robot.ik import PlanarDampedLeastSquaresIK
 from app.simulation.camera import FixedCameraProjector
+
+
+_RENDER_SERVICE_LOCK = RLock()
 
 
 MJCF = r"""
@@ -58,7 +64,20 @@ MJCF = r"""
                   <body name="panda_link7" pos="0.08 0 0">
                     <joint name="panda_joint7" axis="0 0 1" range="-2.90 2.90"/>
                     <geom type="cylinder" size="0.05 0.04" material="dark"/>
-                    <site name="gripper_site" pos="0.07 0 0" size="0.018" rgba="0.8 1 0.3 1"/>
+                    <body name="panda_hand" pos="0.07 0 0">
+                      <geom type="cylinder" size="0.055 0.045" material="dark"/>
+                      <body name="left_finger">
+                        <joint name="finger_joint1" type="slide" axis="0 1 0" range="0 0.04" damping="1"/>
+                        <geom name="left_finger_geom" type="box" pos="0.045 0.04 -0.035" size="0.045 0.01 0.055" material="dark" friction="2 0.1 0.01"/>
+                        <site name="left_finger_touch" pos="0.06 0.028 -0.035" size="0.018"/>
+                      </body>
+                      <body name="right_finger">
+                        <joint name="finger_joint2" type="slide" axis="0 -1 0" range="0 0.04" damping="1"/>
+                        <geom name="right_finger_geom" type="box" pos="0.045 -0.04 -0.035" size="0.045 0.01 0.055" material="dark" friction="2 0.1 0.01"/>
+                        <site name="right_finger_touch" pos="0.06 -0.028 -0.035" size="0.018"/>
+                      </body>
+                      <site name="gripper_site" pos="0.09 0 -0.035" size="0.018" rgba="0.8 1 0.3 1"/>
+                    </body>
                   </body>
                 </body>
               </body>
@@ -80,8 +99,104 @@ MJCF = r"""
     </body>
     <camera name="robot_camera" pos="0 -1.15 1.35" xyaxes="1 0 0 0 0.605 0.796" fovy="49"/>
   </worldbody>
+  <actuator>
+    <position name="joint1_motor" joint="panda_joint1" kp="120" ctrlrange="-2.90 2.90" forcerange="-90 90"/>
+    <position name="joint2_motor" joint="panda_joint2" kp="120" ctrlrange="-2.10 2.10" forcerange="-90 90"/>
+    <position name="joint3_motor" joint="panda_joint3" kp="100" ctrlrange="-2.90 2.90" forcerange="-70 70"/>
+    <position name="joint4_motor" joint="panda_joint4" kp="90" ctrlrange="-3.00 0.10" forcerange="-55 55"/>
+    <position name="joint5_motor" joint="panda_joint5" kp="70" ctrlrange="-2.90 2.90" forcerange="-40 40"/>
+    <position name="joint6_motor" joint="panda_joint6" kp="60" ctrlrange="-0.10 3.70" forcerange="-35 35"/>
+    <position name="joint7_motor" joint="panda_joint7" kp="45" ctrlrange="-2.90 2.90" forcerange="-25 25"/>
+    <position name="left_finger_motor" joint="finger_joint1" kp="180" ctrlrange="0 0.04" forcerange="-20 20"/>
+    <position name="right_finger_motor" joint="finger_joint2" kp="180" ctrlrange="0 0.04" forcerange="-20 20"/>
+  </actuator>
+  <sensor>
+    <touch name="left_finger_contact" site="left_finger_touch"/>
+    <touch name="right_finger_contact" site="right_finger_touch"/>
+  </sensor>
 </mujoco>
 """
+
+
+class _NativeRenderService:
+    """Own the Windows OpenGL context on one thread for its full lifetime."""
+
+    def __init__(self) -> None:
+        self._requests: Queue[Any] = Queue()
+        self._ready = Event()
+        self._closed = False
+        self._startup_error: BaseException | None = None
+        self._thread = Thread(target=self._run, name="mujoco-renderer", daemon=True)
+        self._thread.start()
+        atexit.register(self.close)
+
+    def _run(self) -> None:
+        renderer = None
+        try:
+            import mujoco
+
+            model = mujoco.MjModel.from_xml_string(MJCF)
+            data = mujoco.MjData(model)
+            renderer = mujoco.Renderer(model, height=512, width=512)
+            self._ready.set()
+            while True:
+                request = self._requests.get()
+                if request is None:
+                    break
+                qpos, mocap_pos, mocap_quat, finished, result = request
+                try:
+                    data.qpos[:] = qpos
+                    data.qvel[:] = 0.0
+                    data.mocap_pos[:] = mocap_pos
+                    data.mocap_quat[:] = mocap_quat
+                    mujoco.mj_forward(model, data)
+                    renderer.update_scene(data, camera="robot_camera")
+                    result["pixels"] = renderer.render().copy()
+                except BaseException as error:  # Propagate native-render failures to the caller.
+                    result["error"] = error
+                finally:
+                    finished.set()
+        except BaseException as error:
+            self._startup_error = error
+            self._ready.set()
+        finally:
+            if renderer is not None:
+                renderer.close()
+
+    def render(self, qpos: np.ndarray, mocap_pos: np.ndarray, mocap_quat: np.ndarray) -> np.ndarray:
+        if not self._ready.wait(timeout=30):
+            raise RuntimeError("MUJOCO_RENDERER_START_TIMEOUT")
+        if self._startup_error is not None:
+            raise RuntimeError("MUJOCO_RENDERER_START_FAILED") from self._startup_error
+        if self._closed or not self._thread.is_alive():
+            raise RuntimeError("MUJOCO_RENDERER_CLOSED")
+        finished = Event()
+        result: dict[str, Any] = {}
+        self._requests.put((qpos.copy(), mocap_pos.copy(), mocap_quat.copy(), finished, result))
+        if not finished.wait(timeout=30):
+            raise RuntimeError("MUJOCO_RENDER_TIMEOUT")
+        if "error" in result:
+            raise RuntimeError("MUJOCO_RENDER_FAILED") from result["error"]
+        return result["pixels"]
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._thread.is_alive():
+            self._requests.put(None)
+            self._thread.join(timeout=10)
+
+
+_RENDER_SERVICE: _NativeRenderService | None = None
+
+
+def _get_render_service() -> _NativeRenderService:
+    global _RENDER_SERVICE
+    with _RENDER_SERVICE_LOCK:
+        if _RENDER_SERVICE is None:
+            _RENDER_SERVICE = _NativeRenderService()
+        return _RENDER_SERVICE
 
 
 @dataclass
@@ -89,11 +204,14 @@ class ToolExecution:
     success: bool
     error: str | None = None
     frames: list[dict[str, Any]] | None = None
+    details: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {"success": self.success}
         if self.error:
             result["error"] = self.error
+        if self.details:
+            result.update(self.details)
         return result
 
 
@@ -113,7 +231,10 @@ class MujocoEngine:
         self.model = None
         self.data = None
         self._mujoco = None
-        self._renderer = None
+        self._cube_qpos_address: int | None = None
+        self._cube_dof_address: int | None = None
+        self._finger_geom_ids: set[int] = set()
+        self._cube_geom_id: int | None = None
         if enable_mujoco:
             try:
                 import mujoco
@@ -121,6 +242,16 @@ class MujocoEngine:
                 self._mujoco = mujoco
                 self.model = mujoco.MjModel.from_xml_string(MJCF)
                 self.data = mujoco.MjData(self.model)
+                cube_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "red_cube_free")
+                self._cube_qpos_address = int(self.model.jnt_qposadr[cube_joint])
+                self._cube_dof_address = int(self.model.jnt_dofadr[cube_joint])
+                self._cube_geom_id = mujoco.mj_name2id(
+                    self.model, mujoco.mjtObj.mjOBJ_GEOM, "red_cube_geom"
+                )
+                self._finger_geom_ids = {
+                    mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "left_finger_geom"),
+                    mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "right_finger_geom"),
+                }
             except (ImportError, OSError, RuntimeError):
                 self.model = None
                 self.data = None
@@ -144,19 +275,58 @@ class MujocoEngine:
         self.gripper_open = True
         self.grasped = False
         self.frame = 0
+        self.simulation_steps = 0
         self._sync_mujoco()
         return self.state()
 
     def _sync_mujoco(self) -> None:
         if not self.mujoco_enabled:
             return
+        self._mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:7] = self.robot_joints
-        cube_joint = self._mujoco.mj_name2id(self.model, self._mujoco.mjtObj.mjOBJ_JOINT, "red_cube_free")
-        cube_qpos = self.model.jnt_qposadr[cube_joint]
-        self.data.qpos[cube_qpos : cube_qpos + 3] = self.cube_position
-        self.data.qpos[cube_qpos + 3 : cube_qpos + 7] = (1.0, 0.0, 0.0, 0.0)
+        self.data.qpos[7:9] = 0.04 if self.gripper_open else 0.0
+        self.data.ctrl[:7] = self.robot_joints
+        self.data.ctrl[7:9] = 0.04 if self.gripper_open else 0.0
+        self._write_cube_pose()
         self.data.mocap_pos[0] = self.box_position
         self._mujoco.mj_forward(self.model, self.data)
+
+    def _write_cube_pose(self) -> None:
+        if not self.mujoco_enabled or self._cube_qpos_address is None:
+            return
+        address = self._cube_qpos_address
+        self.data.qpos[address : address + 3] = self.cube_position
+        self.data.qpos[address + 3 : address + 7] = (1.0, 0.0, 0.0, 0.0)
+        if self._cube_dof_address is not None:
+            self.data.qvel[self._cube_dof_address : self._cube_dof_address + 6] = 0.0
+
+    def _step_actuators(self, target_joints: np.ndarray, substeps: int = 10) -> None:
+        if not self.mujoco_enabled:
+            self.robot_joints = target_joints.copy()
+            return
+        self.data.ctrl[:7] = target_joints
+        self.data.ctrl[7:9] = 0.04 if self.gripper_open else 0.0
+        self.data.mocap_pos[0] = self.box_position
+        for _ in range(substeps):
+            if self.grasped:
+                self._write_cube_pose()
+            self._mujoco.mj_step(self.model, self.data)
+            self.simulation_steps += 1
+        self.robot_joints = self.data.qpos[:7].copy()
+        if not self.grasped and self._cube_qpos_address is not None:
+            address = self._cube_qpos_address
+            self.cube_position = self.data.qpos[address : address + 3].copy()
+
+    def _finger_contact_count(self) -> int:
+        if not self.mujoco_enabled or self._cube_geom_id is None:
+            return 0
+        count = 0
+        for index in range(self.data.ncon):
+            contact = self.data.contact[index]
+            pair = {int(contact.geom1), int(contact.geom2)}
+            if self._cube_geom_id in pair and pair.intersection(self._finger_geom_ids):
+                count += 1
+        return count
 
     def state(self) -> dict[str, Any]:
         return {
@@ -173,6 +343,10 @@ class MujocoEngine:
             "grasped": self.grasped,
             "verified": self.verify_task(),
             "physics": "mujoco" if self.mujoco_enabled else "kinematic-fallback",
+            "control_mode": "actuator-mj_step" if self.mujoco_enabled else "direct-kinematics",
+            "simulation_steps": self.simulation_steps,
+            "simulation_time": round(float(self.data.time), 4) if self.mujoco_enabled else 0.0,
+            "actuator_count": int(self.model.nu) if self.mujoco_enabled else 0,
         }
 
     def move(self, x: int, y: int, high: bool) -> ToolExecution:
@@ -191,13 +365,23 @@ class MujocoEngine:
         frames: list[dict[str, Any]] = []
         for fraction in np.linspace(0.1, 1.0, 10):
             self.ee_position = start_position + fraction * (end_position - start_position)
-            self.robot_joints = start_joints + fraction * (end_joints - start_joints)
+            target_joints = start_joints + fraction * (end_joints - start_joints)
             if self.grasped:
                 self.cube_position = self.ee_position + np.asarray((0.0, 0.0, -0.04))
             self.frame += 1
-            self._sync_mujoco()
+            if self.mujoco_enabled:
+                self._step_actuators(target_joints, substeps=12)
+            else:
+                self.robot_joints = target_joints
             frames.append(self.state())
-        return ToolExecution(True, frames=frames)
+        return ToolExecution(
+            True,
+            frames=frames,
+            details={
+                "control_mode": "actuator-mj_step" if self.mujoco_enabled else "direct-kinematics",
+                "simulation_steps": self.simulation_steps,
+            },
+        )
 
     def set_gripper_state(self, opened: bool) -> ToolExecution:
         self.gripper_open = opened
@@ -211,12 +395,31 @@ class MujocoEngine:
             distance = float(np.linalg.norm(self.ee_position[:2] - self.cube_position[:2]))
             if distance > 0.065 or self.ee_position[2] > 0.54:
                 self.frame += 1
-                self._sync_mujoco()
+                if self.mujoco_enabled:
+                    self._step_actuators(self.robot_joints, substeps=24)
                 return ToolExecution(False, "GRASP_FAILED")
+        if self.mujoco_enabled:
+            if opened and self._cube_qpos_address is not None:
+                self._write_cube_pose()
+                self._mujoco.mj_forward(self.model, self.data)
+            self._step_actuators(self.robot_joints, substeps=36)
+        contact_count = self._finger_contact_count()
+        if not opened:
             self.grasped = True
+            self.cube_position = self.ee_position + np.asarray((0.0, 0.0, -0.04))
+            if self.mujoco_enabled:
+                self._write_cube_pose()
+                self._mujoco.mj_forward(self.model, self.data)
         self.frame += 1
-        self._sync_mujoco()
-        return ToolExecution(True, frames=[self.state()])
+        return ToolExecution(
+            True,
+            frames=[self.state()],
+            details={
+                "contact_count": contact_count,
+                "finger_actuated": self.mujoco_enabled,
+                "simulation_steps": self.simulation_steps,
+            },
+        )
 
     def verify_task(self) -> bool:
         delta = np.abs(self.cube_position[:2] - self.box_position[:2])
@@ -249,10 +452,11 @@ class MujocoEngine:
     def camera_png_base64(self) -> str:
         if self.mujoco_enabled:
             try:
-                if self._renderer is None:
-                    self._renderer = self._mujoco.Renderer(self.model, height=512, width=512)
-                self._renderer.update_scene(self.data, camera="robot_camera")
-                pixels = self._renderer.render()
+                pixels = _get_render_service().render(
+                    self.data.qpos,
+                    self.data.mocap_pos,
+                    self.data.mocap_quat,
+                )
                 image = Image.fromarray(pixels)
                 return self._encode_png(image)
             except (RuntimeError, OSError):
@@ -276,4 +480,3 @@ class MujocoEngine:
         draw.rectangle((cx - 17, cy - 17, cx + 17, cy + 17), fill="#df3029", outline="#8b1511", width=4)
         draw.rectangle((bx - 52, by - 43, bx + 52, by + 43), fill="#8eb2f0", outline="#194eba", width=10)
         return image
-
