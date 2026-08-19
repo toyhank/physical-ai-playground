@@ -47,3 +47,4 @@ server/.venv/
 /data/runs/
 *.tsbuildinfo
 *.tgz
+/.local-logs/

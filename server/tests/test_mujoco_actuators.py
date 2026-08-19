@@ -33,9 +33,17 @@ def test_gripper_finger_joints_are_actuated() -> None:
         pytest.skip("MuJoCo is not installed in this environment")
 
     opened = engine.data.qpos[7:9].copy()
-    assert np.all(opened > 0.035)
-    engine.set_gripper_state(False)
+    assert np.all(opened > 0.055)
+    cube_x, cube_y = engine.projector.world_to_normalized(engine.cube_position)
+    assert engine.move(cube_x, cube_y, high=True).success
+    assert engine.move(cube_x, cube_y, high=False).success
+
+    result = engine.set_gripper_state(False)
     closed = engine.data.qpos[7:9].copy()
 
+    assert result.success
+    assert result.as_dict()["contact_count"] >= 1
+    assert result.as_dict()["grasp_constraint"] == "contact-gated-attachment"
+    assert engine.grasped
     assert np.all(closed < opened)
     assert np.allclose(engine.data.ctrl[7:9], 0.0)

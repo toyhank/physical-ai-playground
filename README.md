@@ -91,6 +91,8 @@ npm run build
 The checked-in benchmarks distinguish the lightweight fallback from the native
 MuJoCo actuator path. [`benchmarks/mujoco-actuator.json`](benchmarks/mujoco-actuator.json)
 records 100/100 successful randomized resets using 9 actuators and `mj_step`.
+The gripper must first produce a real MuJoCo finger-to-cube contact; only then
+does the simulator enable a stabilized attachment for transport.
 External Gemini tests are opt-in:
 
 ```powershell
@@ -131,6 +133,7 @@ stop, and per-IP task rate limits.
 - Projection, IK, safety, orchestration, API lifecycle: passed
 - Native MuJoCo 3.11 actuator benchmark: 100/100 randomized resets
 - 7 arm position actuators + 2 finger actuators; state advances through `mj_step`
+- Grasping is contact-gated: no finger contact returns `NO_FINGER_CONTACT`
 - Gemini access/spatial/function-call smoke test: passed on the developer account
 - 20-run Gemini reliability benchmark is not claimed until run in the target
   billing environment
