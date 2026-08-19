@@ -336,6 +336,11 @@ class MujocoEngine:
             "frame": self.frame,
             "robot": {
                 "joints": [round(float(value), 5) for value in self.robot_joints],
+                "finger_joints": (
+                    [round(float(value), 5) for value in self.data.qpos[7:9]]
+                    if self.mujoco_enabled
+                    else [0.06 if self.gripper_open else 0.0] * 2
+                ),
                 "ee_position": [round(float(value), 5) for value in self.ee_position],
                 "gripper_open": bool(self.gripper_open),
             },
