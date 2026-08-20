@@ -11,9 +11,19 @@ class MockRobotModel:
     name = "mock"
 
     def plan(self, prompt: str, engine: MujocoEngine) -> list[dict[str, Any]]:
-        del prompt  # All supported languages use the same visual task loop.
+        normalized = prompt.lower()
+        requested_object = "red_cube"
+        for keywords, object_id in (
+            (("绿色", "green"), "green_cube"),
+            (("黄色", "yellow"), "yellow_cube"),
+            (("紫色", "purple"), "purple_cube"),
+            (("红色", "red"), "red_cube"),
+        ):
+            if any(keyword in normalized for keyword in keywords):
+                requested_object = object_id
+                break
         del engine
         return [
-            {"name": "pick_object", "arguments": {"object_id": "red_cube"}},
+            {"name": "pick_object", "arguments": {"object_id": requested_object}},
             {"name": "place_object", "arguments": {"container_id": "blue_box"}},
         ]

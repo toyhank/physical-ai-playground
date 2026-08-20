@@ -18,7 +18,10 @@ TOOLS = [
         "parameters": {
             "type": "object",
             "properties": {
-                "object_id": {"type": "string", "enum": ["red_cube"]},
+                "object_id": {
+                    "type": "string",
+                    "enum": ["red_cube", "green_cube", "yellow_cube", "purple_cube"],
+                },
             },
             "required": ["object_id"],
         },

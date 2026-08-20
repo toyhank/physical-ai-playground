@@ -14,6 +14,8 @@ receives the key.
 - FastAPI session service and WebSocket event stream
 - Fixed global and eye-in-hand Panda wrist RGB cameras
 - Safety-gated semantic skills backed by a stable world-frame object snapshot
+- Four independently simulated red, green, yellow, and purple cubes with a new
+  collision-safe randomized layout on every reset
 - Damped-least-squares arm IK with joint limits
 - Google DeepMind MuJoCo Menagerie Franka Panda with its official visual and
   collision meshes, 7 arm actuators, one coupled gripper actuator, `mj_step`
@@ -97,6 +99,7 @@ tool results. It does not connect to robot hardware.
 ```powershell
 server/.venv/Scripts/python.exe -m pytest
 server/.venv/Scripts/python.exe scripts/benchmark_mock.py
+server/.venv/Scripts/python.exe scripts/benchmark_multicolor.py
 npm run build
 ```
 
@@ -104,6 +107,8 @@ The checked-in benchmarks distinguish the lightweight fallback from the native
 MuJoCo actuator path. [`benchmarks/mujoco-actuator.json`](benchmarks/mujoco-actuator.json)
 records 100/100 successful randomized resets using the Panda's 8 actuators and
 `mj_step`.
+The multicolor benchmark exercises all four object IDs over 25 randomized
+layouts (100 physical pick-and-place trials total).
 The model sees both a fixed global RGB view and an RGB view from a camera rigidly
 mounted to the Panda hand. It chooses named task-level skills instead of guessing
 pixels after the wrist moves. In this simulator, MuJoCo ground truth stands in

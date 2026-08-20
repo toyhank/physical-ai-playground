@@ -11,6 +11,9 @@
   <asset>
     <material name="table_material" rgba="0.72 0.62 0.48 1"/>
     <material name="red_material" rgba="0.88 0.10 0.08 1"/>
+    <material name="green_material" rgba="0.08 0.68 0.24 1"/>
+    <material name="yellow_material" rgba="0.95 0.68 0.04 1"/>
+    <material name="purple_material" rgba="0.58 0.16 0.82 1"/>
     <material name="blue_material" rgba="0.06 0.26 0.88 1"/>
   </asset>
 
@@ -24,6 +27,18 @@
     <body name="red_cube" pos="-0.20 0.10 0.47">
       <freejoint name="red_cube_free"/>
       <geom name="red_cube_geom" type="box" size="0.03 0.03 0.03" material="red_material" mass="0.08" friction="1.5 0.1 0.01"/>
+    </body>
+    <body name="green_cube" pos="-0.32 0.24 0.47">
+      <freejoint name="green_cube_free"/>
+      <geom name="green_cube_geom" type="box" size="0.03 0.03 0.03" material="green_material" mass="0.08" friction="1.5 0.1 0.01"/>
+    </body>
+    <body name="yellow_cube" pos="-0.06 0.26 0.47">
+      <freejoint name="yellow_cube_free"/>
+      <geom name="yellow_cube_geom" type="box" size="0.03 0.03 0.03" material="yellow_material" mass="0.08" friction="1.5 0.1 0.01"/>
+    </body>
+    <body name="purple_cube" pos="0.02 0.06 0.47">
+      <freejoint name="purple_cube_free"/>
+      <geom name="purple_cube_geom" type="box" size="0.03 0.03 0.03" material="purple_material" mass="0.08" friction="1.5 0.1 0.01"/>
     </body>
     <body name="blue_box" mocap="true" pos="0.22 0.12 0.452">
       <geom type="box" size="0.12 0.10 0.012" material="blue_material"/>

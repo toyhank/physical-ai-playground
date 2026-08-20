@@ -25,6 +25,13 @@ ROBOT_BODY_NAMES = (
     "link0", "link1", "link2", "link3", "link4", "link5", "link6", "link7",
     "hand", "left_finger", "right_finger",
 )
+CUBE_NAMES = ("red_cube", "green_cube", "yellow_cube", "purple_cube")
+CUBE_COLORS = {
+    "red_cube": "#df3029",
+    "green_cube": "#18a84b",
+    "yellow_cube": "#f0ad12",
+    "purple_cube": "#8c36c7",
+}
 MUJOCO_TO_THREE = np.asarray(((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0)))
 
 
@@ -154,10 +161,10 @@ class MujocoEngine:
         self.model = None
         self.data = None
         self._mujoco = None
-        self._cube_qpos_address: int | None = None
-        self._cube_dof_address: int | None = None
+        self._cube_qpos_addresses: dict[str, int] = {}
+        self._cube_dof_addresses: dict[str, int] = {}
         self._finger_geom_ids: set[int] = set()
-        self._cube_geom_id: int | None = None
+        self._cube_geom_ids: dict[str, int] = {}
         self._gripper_site_id: int | None = None
         self._camera_id: int | None = None
         self._body_ids: dict[str, int] = {}
@@ -176,12 +183,19 @@ class MujocoEngine:
                 self._mujoco = mujoco
                 self.model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
                 self.data = mujoco.MjData(self.model)
-                cube_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "red_cube_free")
-                self._cube_qpos_address = int(self.model.jnt_qposadr[cube_joint])
-                self._cube_dof_address = int(self.model.jnt_dofadr[cube_joint])
-                self._cube_geom_id = mujoco.mj_name2id(
-                    self.model, mujoco.mjtObj.mjOBJ_GEOM, "red_cube_geom"
-                )
+                for cube_name in CUBE_NAMES:
+                    cube_joint = mujoco.mj_name2id(
+                        self.model, mujoco.mjtObj.mjOBJ_JOINT, f"{cube_name}_free"
+                    )
+                    self._cube_qpos_addresses[cube_name] = int(
+                        self.model.jnt_qposadr[cube_joint]
+                    )
+                    self._cube_dof_addresses[cube_name] = int(
+                        self.model.jnt_dofadr[cube_joint]
+                    )
+                    self._cube_geom_ids[cube_name] = mujoco.mj_name2id(
+                        self.model, mujoco.mjtObj.mjOBJ_GEOM, f"{cube_name}_geom"
+                    )
                 finger_body_ids = {
                     mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "left_finger"),
                     mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "right_finger"),
@@ -210,22 +224,44 @@ class MujocoEngine:
     def mujoco_enabled(self) -> bool:
         return self.model is not None and self.data is not None
 
+    @property
+    def cube_position(self) -> np.ndarray:
+        """Backward-compatible alias for the red cube used by older tests."""
+        return self.cube_positions["red_cube"]
+
+    @cube_position.setter
+    def cube_position(self, value: np.ndarray) -> None:
+        self.cube_positions["red_cube"] = np.asarray(value, dtype=float)
+
     def reset(self, seed: int | None = None) -> dict[str, Any]:
         rng = random.Random(seed)
-        for _ in range(100):
-            cube = np.asarray((rng.uniform(-0.34, -0.08), rng.uniform(0.02, 0.28)), dtype=float)
-            box = np.asarray((rng.uniform(0.08, 0.34), rng.uniform(0.02, 0.28)), dtype=float)
-            # Keep both objects spatially separated and independently visible
-            # from the initial wrist-camera pose. World distance alone can put
-            # the container directly in front of the cube in image space.
-            if np.linalg.norm(cube - box) >= 0.24 and box[0] - cube[0] >= 0.28:
-                break
-        self.cube_position = np.asarray((cube[0], cube[1], self.table_z + self.cube_half_size), dtype=float)
+        box = np.asarray((rng.uniform(0.21, 0.32), rng.uniform(0.05, 0.26)), dtype=float)
+        cube_points: list[np.ndarray] = []
+        for _cube_name in CUBE_NAMES:
+            for _ in range(500):
+                candidate = np.asarray(
+                    (rng.uniform(-0.35, 0.03), rng.uniform(0.02, 0.30)), dtype=float
+                )
+                if (
+                    np.linalg.norm(candidate - box) >= 0.20
+                    and all(np.linalg.norm(candidate - other) >= 0.105 for other in cube_points)
+                ):
+                    cube_points.append(candidate)
+                    break
+            else:
+                raise RuntimeError("SCENE_RANDOMIZATION_FAILED")
+        self.cube_positions = {
+            name: np.asarray((point[0], point[1], self.table_z + self.cube_half_size), dtype=float)
+            for name, point in zip(CUBE_NAMES, cube_points, strict=True)
+        }
         self.box_position = np.asarray((box[0], box[1], self.table_z + 0.012), dtype=float)
         self.ee_position = np.asarray((0.0, -0.10, 0.72), dtype=float)
         self.robot_joints = PANDA_HOME.copy()
         self.gripper_open = True
         self.grasped = False
+        self.held_object_id: str | None = None
+        self.task_object_id: str = "red_cube"
+        self._active_object_id: str = "red_cube"
         self.frame = 0
         self.simulation_steps = 0
         self._sync_mujoco()
@@ -243,7 +279,7 @@ class MujocoEngine:
         downstream skills consume stable object poses instead of image pixels.
         """
         self._observed_objects = {
-            "red_cube": self.cube_position.copy(),
+            **{name: position.copy() for name, position in self.cube_positions.items()},
             "blue_box": self.box_position.copy(),
         }
 
@@ -316,7 +352,7 @@ class MujocoEngine:
         body_name = self._mujoco.mj_id2name(
             self.model, self._mujoco.mjtObj.mjOBJ_BODY, body_id
         )
-        return {"red_cube": "cube", "blue_box": "box"}.get(body_name)
+        return body_name if body_name in (*CUBE_NAMES, "blue_box") else None
 
     def _sync_mujoco(self) -> None:
         if not self.mujoco_enabled:
@@ -326,18 +362,20 @@ class MujocoEngine:
         self.data.qpos[7:9] = 0.04 if self.gripper_open else 0.0
         self.data.ctrl[:7] = self.robot_joints
         self.data.ctrl[7] = 255.0 if self.gripper_open else 0.0
-        self._write_cube_pose()
+        for cube_name in CUBE_NAMES:
+            self._write_cube_pose(cube_name)
         self.data.mocap_pos[0] = self.box_position
         self._mujoco.mj_forward(self.model, self.data)
 
-    def _write_cube_pose(self) -> None:
-        if not self.mujoco_enabled or self._cube_qpos_address is None:
+    def _write_cube_pose(self, cube_name: str) -> None:
+        address = self._cube_qpos_addresses.get(cube_name)
+        if not self.mujoco_enabled or address is None:
             return
-        address = self._cube_qpos_address
-        self.data.qpos[address : address + 3] = self.cube_position
+        self.data.qpos[address : address + 3] = self.cube_positions[cube_name]
         self.data.qpos[address + 3 : address + 7] = (1.0, 0.0, 0.0, 0.0)
-        if self._cube_dof_address is not None:
-            self.data.qvel[self._cube_dof_address : self._cube_dof_address + 6] = 0.0
+        dof_address = self._cube_dof_addresses.get(cube_name)
+        if dof_address is not None:
+            self.data.qvel[dof_address : dof_address + 6] = 0.0
 
     def _step_actuators(self, target_joints: np.ndarray, substeps: int = 10) -> None:
         if not self.mujoco_enabled:
@@ -347,27 +385,28 @@ class MujocoEngine:
         self.data.ctrl[7] = 255.0 if self.gripper_open else 0.0
         self.data.mocap_pos[0] = self.box_position
         for _ in range(substeps):
-            if self.grasped:
-                self._write_cube_pose()
+            if self.grasped and self.held_object_id:
+                self._write_cube_pose(self.held_object_id)
             self._mujoco.mj_step(self.model, self.data)
             self.simulation_steps += 1
             if self._gripper_site_id is not None:
                 self.ee_position = self.data.site_xpos[self._gripper_site_id].copy()
-            if self.grasped:
-                self.cube_position = self.ee_position.copy()
+            if self.grasped and self.held_object_id:
+                self.cube_positions[self.held_object_id] = self.ee_position.copy()
         self.robot_joints = self.data.qpos[:7].copy()
-        if not self.grasped and self._cube_qpos_address is not None:
-            address = self._cube_qpos_address
-            self.cube_position = self.data.qpos[address : address + 3].copy()
+        for cube_name, address in self._cube_qpos_addresses.items():
+            if not self.grasped or cube_name != self.held_object_id:
+                self.cube_positions[cube_name] = self.data.qpos[address : address + 3].copy()
 
     def _finger_contact_count(self) -> int:
-        if not self.mujoco_enabled or self._cube_geom_id is None:
+        cube_geom_id = self._cube_geom_ids.get(self._active_object_id)
+        if not self.mujoco_enabled or cube_geom_id is None:
             return 0
         count = 0
         for index in range(self.data.ncon):
             contact = self.data.contact[index]
             pair = {int(contact.geom1), int(contact.geom2)}
-            if self._cube_geom_id in pair and pair.intersection(self._finger_geom_ids):
+            if cube_geom_id in pair and pair.intersection(self._finger_geom_ids):
                 count += 1
         return count
 
@@ -456,10 +495,18 @@ class MujocoEngine:
                 "gripper_open": bool(self.gripper_open),
             },
             "objects": [
-                {"name": "red_cube", "position": [round(float(value), 5) for value in self.cube_position]},
+                *[
+                    {
+                        "name": name,
+                        "position": [round(float(value), 5) for value in self.cube_positions[name]],
+                    }
+                    for name in CUBE_NAMES
+                ],
                 {"name": "blue_box", "position": [round(float(value), 5) for value in self.box_position]},
             ],
             "grasped": bool(self.grasped),
+            "held_object_id": self.held_object_id,
+            "task_object_id": self.task_object_id,
             "verified": self.verify_task(),
             "physics": "mujoco" if self.mujoco_enabled else "kinematic-fallback",
             "control_mode": "actuator-mj_step" if self.mujoco_enabled else "direct-kinematics",
@@ -483,19 +530,27 @@ class MujocoEngine:
         snapped_target = self._observation_ray_target(x, y)
         if snapped_target is not None:
             target_world[:2] = (
-                self.cube_position[:2] if snapped_target == "cube" else self.box_position[:2]
+                self.box_position[:2]
+                if snapped_target == "blue_box"
+                else self.cube_positions[snapped_target][:2]
             )
         else:
-            for name, object_position in (("cube", self.cube_position), ("box", self.box_position)):
+            scene_objects = [
+                *((name, self.cube_positions[name]) for name in CUBE_NAMES),
+                ("blue_box", self.box_position),
+            ]
+            for name, object_position in scene_objects:
                 if np.linalg.norm(target_world[:2] - object_position[:2]) <= 0.08:
                     target_world[:2] = object_position[:2]
                     snapped_target = name
                     break
+        if snapped_target in CUBE_NAMES:
+            self._active_object_id = snapped_target
         return self._move_to_world(target_world[:2], high, snapped_target)
 
     def _move_to_world(
         self,
-        target_xy: np.ndarray | tuple[float, float],
+        target_xy: np.ndarray | tuple[float, float] | list[float],
         high: bool,
         snapped_target: str | None = None,
     ) -> ToolExecution:
@@ -506,12 +561,25 @@ class MujocoEngine:
         start_joints = self.robot_joints.copy()
         low_height = (
             self.box_position[2] + 0.012 + self.cube_half_size
-            if snapped_target == "box"
+            if snapped_target == "blue_box"
             else self.table_z + self.cube_half_size
         )
         end_position = np.asarray((target_world[0], target_world[1], 0.72 if high else low_height), dtype=float)
         if self.mujoco_enabled:
             ik_success, end_joints, ik_error = self._solve_panda_ik(end_position, start_joints)
+            if not ik_success:
+                # A carried object can leave the arm in a poor local IK basin.
+                # Re-seed from Panda's standard collision-clear posture while
+                # retaining the same Cartesian goal and tool orientation.
+                retry_success, retry_joints, retry_error = self._solve_panda_ik(
+                    end_position, PANDA_HOME
+                )
+                if retry_success or retry_error < ik_error:
+                    ik_success, end_joints, ik_error = (
+                        retry_success,
+                        retry_joints,
+                        retry_error,
+                    )
             if not ik_success:
                 return ToolExecution(False, "IK_FAILED", details={"ik_error": round(ik_error, 5)})
         else:
@@ -532,8 +600,8 @@ class MujocoEngine:
             else:
                 self.robot_joints = target_joints
                 self.ee_position = requested_position
-                if self.grasped:
-                    self.cube_position = self.ee_position.copy()
+                if self.grasped and self.held_object_id:
+                    self.cube_positions[self.held_object_id] = self.ee_position.copy()
             frames.append(self.state())
         return ToolExecution(
             True,
@@ -571,22 +639,24 @@ class MujocoEngine:
         )
 
     def pick_object(self, object_id: str) -> ToolExecution:
-        if object_id != "red_cube":
+        if object_id not in CUBE_NAMES:
             return ToolExecution(False, "UNKNOWN_OBJECT")
         if self.grasped:
             return ToolExecution(False, "GRIPPER_ALREADY_HOLDING_OBJECT")
         target = self._observed_objects.get(object_id)
         if target is None:
             return ToolExecution(False, "OBJECT_NOT_OBSERVED")
+        self.task_object_id = object_id
+        self._active_object_id = object_id
         xy = [float(target[0]), float(target[1])]
         return self._execute_skill(
             "pick_object",
             [
                 ("gripper", {"opened": True}),
-                ("move_world", {"target_xy": xy, "high": True, "snapped_target": "cube"}),
-                ("move_world", {"target_xy": xy, "high": False, "snapped_target": "cube"}),
+                ("move_world", {"target_xy": xy, "high": True, "snapped_target": object_id}),
+                ("move_world", {"target_xy": xy, "high": False, "snapped_target": object_id}),
                 ("gripper", {"opened": False}),
-                ("move_world", {"target_xy": xy, "high": True, "snapped_target": "cube"}),
+                ("move_world", {"target_xy": xy, "high": True, "snapped_target": object_id}),
             ],
         )
 
@@ -602,29 +672,33 @@ class MujocoEngine:
         return self._execute_skill(
             "place_object",
             [
-                ("move_world", {"target_xy": xy, "high": True, "snapped_target": "box"}),
-                ("move_world", {"target_xy": xy, "high": False, "snapped_target": "box"}),
+                ("move_world", {"target_xy": xy, "high": True, "snapped_target": "blue_box"}),
+                ("move_world", {"target_xy": xy, "high": False, "snapped_target": "blue_box"}),
                 ("gripper", {"opened": True}),
-                ("move_world", {"target_xy": xy, "high": True, "snapped_target": "box"}),
+                ("move_world", {"target_xy": xy, "high": True, "snapped_target": "blue_box"}),
             ],
         )
 
     def set_gripper_state(self, opened: bool) -> ToolExecution:
         self.gripper_open = opened
+        released_object_id: str | None = None
         if opened:
-            if self.grasped:
+            if self.grasped and self.held_object_id:
+                released_object_id = self.held_object_id
                 self.grasped = False
-                self.cube_position = self.ee_position.copy()
+                self.cube_positions[released_object_id] = self.ee_position.copy()
+                self.held_object_id = None
         else:
-            distance = float(np.linalg.norm(self.ee_position[:2] - self.cube_position[:2]))
+            active_position = self.cube_positions[self._active_object_id]
+            distance = float(np.linalg.norm(self.ee_position[:2] - active_position[:2]))
             if distance > 0.065 or self.ee_position[2] > 0.54:
                 self.frame += 1
                 if self.mujoco_enabled:
                     self._step_actuators(self.robot_joints, substeps=24)
                 return ToolExecution(False, "GRASP_FAILED")
         if self.mujoco_enabled:
-            if opened and self._cube_qpos_address is not None:
-                self._write_cube_pose()
+            if opened and released_object_id:
+                self._write_cube_pose(released_object_id)
                 self._mujoco.mj_forward(self.model, self.data)
             if opened:
                 self._step_actuators(self.robot_joints, substeps=36)
@@ -656,9 +730,10 @@ class MujocoEngine:
                     },
                 )
             self.grasped = True
-            self.cube_position = self.ee_position.copy()
+            self.held_object_id = self._active_object_id
+            self.cube_positions[self.held_object_id] = self.ee_position.copy()
             if self.mujoco_enabled:
-                self._write_cube_pose()
+                self._write_cube_pose(self.held_object_id)
                 self._mujoco.mj_forward(self.model, self.data)
         self.frame += 1
         return ToolExecution(
@@ -673,25 +748,17 @@ class MujocoEngine:
         )
 
     def verify_task(self) -> bool:
-        delta = np.abs(self.cube_position[:2] - self.box_position[:2])
+        target_position = self.cube_positions[self.task_object_id]
+        delta = np.abs(target_position[:2] - self.box_position[:2])
         xy_inside = bool(np.all(delta <= self.box_half_extents))
-        z_inside = self.table_z <= self.cube_position[2] <= self.table_z + 0.12
+        z_inside = self.table_z <= target_position[2] <= self.table_z + 0.12
         return bool(xy_inside and z_inside and not self.grasped)
 
     def deterministic_pick_place(self) -> list[dict[str, Any]]:
-        self._latch_observation_camera()
-        cube_x, cube_y = self.world_to_camera_normalized(self.cube_position)
-        box_x, box_y = self.world_to_camera_normalized(self.box_position)
+        self._latch_world_model()
         actions = [
-            ("set_gripper_state", {"opened": True}),
-            ("move", {"x": cube_x, "y": cube_y, "high": True}),
-            ("move", {"x": cube_x, "y": cube_y, "high": False}),
-            ("set_gripper_state", {"opened": False}),
-            ("move", {"x": cube_x, "y": cube_y, "high": True}),
-            ("move", {"x": box_x, "y": box_y, "high": True}),
-            ("move", {"x": box_x, "y": box_y, "high": False}),
-            ("set_gripper_state", {"opened": True}),
-            ("move", {"x": box_x, "y": box_y, "high": True}),
+            ("pick_object", {"object_id": "red_cube"}),
+            ("place_object", {"container_id": "blue_box"}),
         ]
         results = []
         for name, arguments in actions:
@@ -739,14 +806,20 @@ class MujocoEngine:
             position, basis = self._current_camera_pose()
         else:
             position, basis = self._observation_pose()
-        cube_x, cube_y = self.projector.world_to_normalized(
-            self.cube_position, position=position, basis=basis
-        )
         box_x, box_y = self.projector.world_to_normalized(
             self.box_position, position=position, basis=basis
         )
-        cx, cy = cube_x * 512 // 1000, cube_y * 512 // 1000
         bx, by = box_x * 512 // 1000, box_y * 512 // 1000
-        draw.rectangle((cx - 17, cy - 17, cx + 17, cy + 17), fill="#df3029", outline="#8b1511", width=4)
+        for cube_name, cube_position in self.cube_positions.items():
+            cube_x, cube_y = self.projector.world_to_normalized(
+                cube_position, position=position, basis=basis
+            )
+            cx, cy = cube_x * 512 // 1000, cube_y * 512 // 1000
+            draw.rectangle(
+                (cx - 17, cy - 17, cx + 17, cy + 17),
+                fill=CUBE_COLORS[cube_name],
+                outline="#342f2d",
+                width=3,
+            )
         draw.rectangle((bx - 52, by - 43, bx + 52, by + 43), fill="#8eb2f0", outline="#194eba", width=10)
         return image

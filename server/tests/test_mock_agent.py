@@ -18,6 +18,17 @@ def test_mock_agent_is_language_agnostic() -> None:
     assert [action["name"] for action in chinese] == ["pick_object", "place_object"]
 
 
+def test_mock_agent_selects_requested_color() -> None:
+    engine = MujocoEngine(seed=3, enable_mujoco=False)
+    provider = MockRobotModel()
+    assert provider.plan("把绿色方块放进蓝色盒子", engine)[0]["arguments"] == {
+        "object_id": "green_cube"
+    }
+    assert provider.plan("Put the purple cube in the blue box", engine)[0]["arguments"] == {
+        "object_id": "purple_cube"
+    }
+
+
 def test_mock_agent_end_to_end_is_verified_by_simulator() -> None:
     async def scenario() -> None:
         session = SimulationSession(seed=41)

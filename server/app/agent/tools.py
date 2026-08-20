@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.robot.safety import SafetyValidator
-from app.simulation.mujoco_engine import MujocoEngine, ToolExecution
+from app.simulation.mujoco_engine import CUBE_NAMES, MujocoEngine, ToolExecution
 
 
 class RobotTools:
@@ -25,7 +25,7 @@ class RobotTools:
             validation = self.safety.validate_gripper(arguments.get("opened"), self.steps, self.stopped)
         elif name == "pick_object":
             validation = self.safety.validate_semantic_skill(
-                arguments.get("object_id"), {"red_cube"}, self.steps, self.stopped
+                arguments.get("object_id"), set(CUBE_NAMES), self.steps, self.stopped
             )
         elif name == "place_object":
             validation = self.safety.validate_semantic_skill(

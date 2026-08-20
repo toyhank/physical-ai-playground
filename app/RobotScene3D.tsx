@@ -128,10 +128,17 @@ function PandaBody({ body }: { body: RobotBody }) {
   </group>;
 }
 
-function RedCube({ position }: { position: [number, number, number] }) {
+const CUBE_COLORS: Record<string, string> = {
+  red_cube: "#e01a14",
+  green_cube: "#16a34a",
+  yellow_cube: "#e9a20b",
+  purple_cube: "#8b35c8",
+};
+
+function ColoredCube({ name, position }: { name: string; position: [number, number, number] }) {
   return <mesh position={position} castShadow receiveShadow>
     <boxGeometry args={[0.06, 0.06, 0.06]} />
-    <meshStandardMaterial color="#e01a14" roughness={0.42} />
+    <meshStandardMaterial color={CUBE_COLORS[name] ?? "#777"} roughness={0.42} />
   </mesh>;
 }
 
@@ -147,7 +154,7 @@ function BlueBox({ position }: { position: [number, number, number] }) {
 
 function Workcell({ sceneState }: Props) {
   const objects = Object.fromEntries((sceneState?.objects ?? []).map((item) => [item.name, item.position]));
-  const cubePosition = toThree(objects.red_cube ?? [-0.2, 0.1, 0.47]);
+  const cubeNames = Object.keys(objects).filter((name) => name.endsWith("_cube"));
   const boxPosition = toThree(objects.blue_box ?? [0.22, 0.12, 0.452]);
   const bodies = sceneState?.robot.bodies?.length ? sceneState.robot.bodies : HOME_BODIES;
   return <>
@@ -176,7 +183,7 @@ function Workcell({ sceneState }: Props) {
       <meshStandardMaterial color="#b89e7a" roughness={0.7} />
     </mesh>
     {bodies.map((body) => <PandaBody body={body} key={body.name} />)}
-    <RedCube position={cubePosition} />
+    {cubeNames.map((name) => <ColoredCube name={name} position={toThree(objects[name])} key={name} />)}
     <BlueBox position={boxPosition} />
   </>;
 }
