@@ -5,6 +5,7 @@ import atexit
 import io
 import random
 from dataclasses import dataclass
+from pathlib import Path
 from queue import Queue
 from threading import Event, RLock, Thread
 from typing import Any
@@ -18,104 +19,15 @@ from app.simulation.camera import FixedCameraProjector
 
 _RENDER_SERVICE_LOCK = RLock()
 
+MODEL_PATH = Path(__file__).resolve().parent / "models" / "franka_panda" / "scene.xml"
+PANDA_HOME = np.asarray((0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785), dtype=float)
+ROBOT_BODY_NAMES = (
+    "link0", "link1", "link2", "link3", "link4", "link5", "link6", "link7",
+    "hand", "left_finger", "right_finger",
+)
+MUJOCO_TO_THREE = np.asarray(((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0)))
 
-MJCF = r"""
-<mujoco model="physical_ai_playground">
-  <compiler angle="radian" autolimits="true"/>
-  <option timestep="0.01" gravity="0 0 -9.81"/>
-  <visual><global offwidth="512" offheight="512"/><quality shadowsize="2048"/></visual>
-  <default>
-    <joint damping="2" armature="0.05" limited="true"/>
-    <geom friction="1 0.1 0.01" condim="3"/>
-  </default>
-  <asset>
-    <material name="table" rgba="0.72 0.62 0.48 1"/>
-    <material name="robot" rgba="0.82 0.86 0.84 1"/>
-    <material name="dark" rgba="0.12 0.17 0.15 1"/>
-    <material name="red" rgba="0.88 0.10 0.08 1"/>
-    <material name="blue" rgba="0.06 0.26 0.88 1"/>
-  </asset>
-  <worldbody>
-    <light pos="0 -0.4 2.4" diffuse="0.9 0.9 0.9"/>
-    <geom name="floor" type="plane" size="3 3 0.1" rgba="0.80 0.84 0.80 1"/>
-    <body name="table" pos="0 0 0.40">
-      <geom type="box" size="0.58 0.46 0.04" material="table"/>
-    </body>
-    <body name="panda_link0" pos="0 -0.37 0.44">
-      <geom type="cylinder" size="0.11 0.07" material="dark" contype="0" conaffinity="0"/>
-      <body name="panda_link1" pos="0 0 0.295">
-        <joint name="panda_joint1" axis="0 0 1" range="-2.90 2.90"/>
-        <geom type="capsule" fromto="0 0 0 0.33 0 0" size="0.055" material="robot" contype="0" conaffinity="0"/>
-        <body name="panda_link2" pos="0.33 0 0">
-          <joint name="panda_joint2" axis="0 0 1" range="-2.10 2.10"/>
-          <geom type="capsule" fromto="0 0 0 0.28 0 0" size="0.05" material="robot" contype="0" conaffinity="0"/>
-          <body name="panda_link3" pos="0.28 0 0">
-            <joint name="panda_joint3" axis="0 0 1" range="-2.90 2.90"/>
-            <geom type="capsule" fromto="0 0 0 0.18 0 0" size="0.047" material="robot" contype="0" conaffinity="0"/>
-            <body name="panda_link4" pos="0.18 0 0">
-              <joint name="panda_joint4" type="slide" axis="0 0 1" range="-0.22 0"/>
-              <geom type="cylinder" size="0.05 0.055" material="dark" contype="0" conaffinity="0"/>
-              <body name="panda_link5">
-                <joint name="panda_joint5" axis="1 0 0" range="-2.90 2.90"/>
-                <geom type="cylinder" size="0.047 0.045" material="robot" contype="0" conaffinity="0"/>
-                <body name="panda_link6">
-                  <joint name="panda_joint6" axis="0 1 0" range="-2.90 2.90"/>
-                  <geom type="cylinder" size="0.043 0.04" material="dark" contype="0" conaffinity="0"/>
-                  <body name="panda_link7">
-                    <joint name="panda_joint7" axis="0 0 1" range="-2.90 2.90"/>
-                    <geom type="cylinder" size="0.06 0.045" material="robot" contype="0" conaffinity="0"/>
-                    <body name="panda_hand">
-                      <geom type="cylinder" size="0.065 0.045" material="dark" contype="0" conaffinity="0"/>
-                      <body name="left_finger">
-                        <joint name="finger_joint1" type="slide" axis="0 1 0" range="0 0.06" damping="5"/>
-                        <geom name="left_finger_geom" type="box" pos="0 0.04 -0.035" size="0.045 0.01 0.055" material="dark" friction="2 0.1 0.01"/>
-                        <site name="left_finger_touch" pos="0 0.028 -0.035" size="0.018"/>
-                      </body>
-                      <body name="right_finger">
-                        <joint name="finger_joint2" type="slide" axis="0 -1 0" range="0 0.06" damping="5"/>
-                        <geom name="right_finger_geom" type="box" pos="0 -0.04 -0.035" size="0.045 0.01 0.055" material="dark" friction="2 0.1 0.01"/>
-                        <site name="right_finger_touch" pos="0 -0.028 -0.035" size="0.018"/>
-                      </body>
-                      <site name="gripper_site" pos="0 0 -0.035" size="0.018" rgba="0.8 1 0.3 1"/>
-                    </body>
-                  </body>
-                </body>
-              </body>
-            </body>
-          </body>
-        </body>
-      </body>
-    </body>
-    <body name="red_cube" pos="-0.20 0.10 0.47">
-      <freejoint name="red_cube_free"/>
-      <geom name="red_cube_geom" type="box" size="0.03 0.03 0.03" material="red" mass="0.08"/>
-    </body>
-    <body name="blue_box" mocap="true" pos="0.22 0.12 0.46">
-      <geom type="box" pos="0 0 0" size="0.12 0.10 0.012" material="blue"/>
-      <geom type="box" pos="0.11 0 0.055" size="0.01 0.10 0.055" material="blue"/>
-      <geom type="box" pos="-0.11 0 0.055" size="0.01 0.10 0.055" material="blue"/>
-      <geom type="box" pos="0 0.09 0.055" size="0.10 0.01 0.055" material="blue"/>
-      <geom type="box" pos="0 -0.09 0.055" size="0.10 0.01 0.055" material="blue"/>
-    </body>
-    <camera name="robot_camera" pos="0 -1.15 1.35" xyaxes="1 0 0 0 0.605 0.796" fovy="49"/>
-  </worldbody>
-  <actuator>
-    <position name="joint1_motor" joint="panda_joint1" kp="120" ctrlrange="-2.90 2.90" forcerange="-90 90"/>
-    <position name="joint2_motor" joint="panda_joint2" kp="120" ctrlrange="-2.10 2.10" forcerange="-90 90"/>
-    <position name="joint3_motor" joint="panda_joint3" kp="100" ctrlrange="-2.90 2.90" forcerange="-70 70"/>
-    <position name="joint4_motor" joint="panda_joint4" kp="10000" ctrlrange="-0.22 0" forcerange="-1000 1000"/>
-    <position name="joint5_motor" joint="panda_joint5" kp="70" ctrlrange="-2.90 2.90" forcerange="-40 40"/>
-    <position name="joint6_motor" joint="panda_joint6" kp="60" ctrlrange="-2.90 2.90" forcerange="-35 35"/>
-    <position name="joint7_motor" joint="panda_joint7" kp="45" ctrlrange="-2.90 2.90" forcerange="-25 25"/>
-    <position name="left_finger_motor" joint="finger_joint1" kp="800" ctrlrange="0 0.06" forcerange="-100 100"/>
-    <position name="right_finger_motor" joint="finger_joint2" kp="800" ctrlrange="0 0.06" forcerange="-100 100"/>
-  </actuator>
-  <sensor>
-    <touch name="left_finger_contact" site="left_finger_touch"/>
-    <touch name="right_finger_contact" site="right_finger_touch"/>
-  </sensor>
-</mujoco>
-"""
+
 
 
 class _NativeRenderService:
@@ -135,7 +47,7 @@ class _NativeRenderService:
         try:
             import mujoco
 
-            model = mujoco.MjModel.from_xml_string(MJCF)
+            model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
             data = mujoco.MjData(model)
             renderer = mujoco.Renderer(model, height=512, width=512)
             self._ready.set()
@@ -235,12 +147,15 @@ class MujocoEngine:
         self._cube_dof_address: int | None = None
         self._finger_geom_ids: set[int] = set()
         self._cube_geom_id: int | None = None
+        self._gripper_site_id: int | None = None
+        self._body_ids: dict[str, int] = {}
+        self._target_gripper_rotation: np.ndarray | None = None
         if enable_mujoco:
             try:
                 import mujoco
 
                 self._mujoco = mujoco
-                self.model = mujoco.MjModel.from_xml_string(MJCF)
+                self.model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
                 self.data = mujoco.MjData(self.model)
                 cube_joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "red_cube_free")
                 self._cube_qpos_address = int(self.model.jnt_qposadr[cube_joint])
@@ -248,9 +163,21 @@ class MujocoEngine:
                 self._cube_geom_id = mujoco.mj_name2id(
                     self.model, mujoco.mjtObj.mjOBJ_GEOM, "red_cube_geom"
                 )
+                finger_body_ids = {
+                    mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "left_finger"),
+                    mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "right_finger"),
+                }
                 self._finger_geom_ids = {
-                    mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "left_finger_geom"),
-                    mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "right_finger_geom"),
+                    geom_id
+                    for geom_id in range(self.model.ngeom)
+                    if int(self.model.geom_bodyid[geom_id]) in finger_body_ids
+                }
+                self._gripper_site_id = mujoco.mj_name2id(
+                    self.model, mujoco.mjtObj.mjOBJ_SITE, "gripper_site"
+                )
+                self._body_ids = {
+                    name: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+                    for name in ROBOT_BODY_NAMES
                 }
             except (ImportError, OSError, RuntimeError):
                 self.model = None
@@ -271,15 +198,15 @@ class MujocoEngine:
         self.cube_position = np.asarray((cube[0], cube[1], self.table_z + self.cube_half_size), dtype=float)
         self.box_position = np.asarray((box[0], box[1], self.table_z + 0.012), dtype=float)
         self.ee_position = np.asarray((0.0, -0.10, 0.72), dtype=float)
-        # The first three hinges are the planar IK chain. Joint four is the
-        # vertical carriage: 0.0 is the travel height and -0.195 is the grasp
-        # height. The remaining wrist hinges start neutral.
-        self.robot_joints = np.asarray((0.3, 0.8, -1.0, 0.0, 0.0, 0.0, 0.0), dtype=float)
+        self.robot_joints = PANDA_HOME.copy()
         self.gripper_open = True
         self.grasped = False
         self.frame = 0
         self.simulation_steps = 0
         self._sync_mujoco()
+        if self.mujoco_enabled and self._gripper_site_id is not None:
+            self.ee_position = self.data.site_xpos[self._gripper_site_id].copy()
+            self._target_gripper_rotation = self.data.site_xmat[self._gripper_site_id].reshape(3, 3).copy()
         return self.state()
 
     def _sync_mujoco(self) -> None:
@@ -287,9 +214,9 @@ class MujocoEngine:
             return
         self._mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:7] = self.robot_joints
-        self.data.qpos[7:9] = 0.06 if self.gripper_open else 0.0
+        self.data.qpos[7:9] = 0.04 if self.gripper_open else 0.0
         self.data.ctrl[:7] = self.robot_joints
-        self.data.ctrl[7:9] = 0.06 if self.gripper_open else 0.0
+        self.data.ctrl[7] = 255.0 if self.gripper_open else 0.0
         self._write_cube_pose()
         self.data.mocap_pos[0] = self.box_position
         self._mujoco.mj_forward(self.model, self.data)
@@ -308,13 +235,17 @@ class MujocoEngine:
             self.robot_joints = target_joints.copy()
             return
         self.data.ctrl[:7] = target_joints
-        self.data.ctrl[7:9] = 0.06 if self.gripper_open else 0.0
+        self.data.ctrl[7] = 255.0 if self.gripper_open else 0.0
         self.data.mocap_pos[0] = self.box_position
         for _ in range(substeps):
             if self.grasped:
                 self._write_cube_pose()
             self._mujoco.mj_step(self.model, self.data)
             self.simulation_steps += 1
+            if self._gripper_site_id is not None:
+                self.ee_position = self.data.site_xpos[self._gripper_site_id].copy()
+            if self.grasped:
+                self.cube_position = self.ee_position.copy()
         self.robot_joints = self.data.qpos[:7].copy()
         if not self.grasped and self._cube_qpos_address is not None:
             address = self._cube_qpos_address
@@ -331,6 +262,76 @@ class MujocoEngine:
                 count += 1
         return count
 
+    def _robot_body_states(self) -> list[dict[str, Any]]:
+        if not self.mujoco_enabled:
+            return []
+        bodies: list[dict[str, Any]] = []
+        for name, body_id in self._body_ids.items():
+            rotation = self.data.xmat[body_id].reshape(3, 3)
+            three_rotation = MUJOCO_TO_THREE @ rotation @ MUJOCO_TO_THREE.T
+            three_position = MUJOCO_TO_THREE @ self.data.xpos[body_id]
+            matrix = np.eye(4, dtype=float)
+            matrix[:3, :3] = three_rotation
+            matrix[:3, 3] = three_position
+            bodies.append(
+                {
+                    "name": name,
+                    "matrix": [round(float(value), 7) for value in matrix.reshape(-1)],
+                }
+            )
+        return bodies
+
+    @staticmethod
+    def _orientation_error(target: np.ndarray, current: np.ndarray) -> np.ndarray:
+        delta = target @ current.T
+        return 0.5 * np.asarray(
+            (delta[2, 1] - delta[1, 2], delta[0, 2] - delta[2, 0], delta[1, 0] - delta[0, 1]),
+            dtype=float,
+        )
+
+    def _solve_panda_ik(self, target: np.ndarray, initial: np.ndarray) -> tuple[bool, np.ndarray, float]:
+        if not self.mujoco_enabled or self._gripper_site_id is None or self._target_gripper_rotation is None:
+            return False, initial.copy(), float("inf")
+        work = self._mujoco.MjData(self.model)
+        joints = initial.copy()
+        lower = self.model.jnt_range[:7, 0] + 0.015
+        upper = self.model.jnt_range[:7, 1] - 0.015
+        jacobian_position = np.zeros((3, self.model.nv), dtype=float)
+        jacobian_rotation = np.zeros((3, self.model.nv), dtype=float)
+        orientation_weight = 0.32
+        damping = 0.045
+        for _ in range(260):
+            work.qpos[:7] = joints
+            work.qpos[7:9] = 0.04
+            self._mujoco.mj_forward(self.model, work)
+            position_error = target - work.site_xpos[self._gripper_site_id]
+            current_rotation = work.site_xmat[self._gripper_site_id].reshape(3, 3)
+            rotation_error = self._orientation_error(self._target_gripper_rotation, current_rotation)
+            position_norm = float(np.linalg.norm(position_error))
+            if position_norm <= 0.0035 and np.linalg.norm(rotation_error) <= 0.055:
+                return True, joints, position_norm
+            self._mujoco.mj_jacSite(
+                self.model,
+                work,
+                jacobian_position,
+                jacobian_rotation,
+                self._gripper_site_id,
+            )
+            jacobian = np.vstack(
+                (jacobian_position[:, :7], orientation_weight * jacobian_rotation[:, :7])
+            )
+            error = np.concatenate((position_error, orientation_weight * rotation_error))
+            damped = jacobian @ jacobian.T + (damping**2) * np.eye(6)
+            pseudo_inverse = jacobian.T @ np.linalg.solve(damped, np.eye(6))
+            delta = pseudo_inverse @ error
+            nullspace = np.eye(7) - pseudo_inverse @ jacobian
+            delta += nullspace @ (0.035 * (PANDA_HOME - joints))
+            joints = np.clip(joints + np.clip(delta, -0.09, 0.09), lower, upper)
+        work.qpos[:7] = joints
+        self._mujoco.mj_forward(self.model, work)
+        final_error = float(np.linalg.norm(target - work.site_xpos[self._gripper_site_id]))
+        return final_error <= 0.012, joints, final_error
+
     def state(self) -> dict[str, Any]:
         return {
             "frame": self.frame,
@@ -339,8 +340,9 @@ class MujocoEngine:
                 "finger_joints": (
                     [round(float(value), 5) for value in self.data.qpos[7:9]]
                     if self.mujoco_enabled
-                    else [0.06 if self.gripper_open else 0.0] * 2
+                    else [0.04 if self.gripper_open else 0.0] * 2
                 ),
+                "bodies": self._robot_body_states(),
                 "ee_position": [round(float(value), 5) for value in self.ee_position],
                 "gripper_open": bool(self.gripper_open),
             },
@@ -363,39 +365,53 @@ class MujocoEngine:
         # projection lands close to a known scene object, lock the Cartesian
         # target to its measured MuJoCo pose so the last centimetres of the
         # approach are handled by physics instead of projection error.
-        for object_position in (self.cube_position, self.box_position):
+        snapped_target: str | None = None
+        for name, object_position in (("cube", self.cube_position), ("box", self.box_position)):
             if np.linalg.norm(target_world[:2] - object_position[:2]) <= 0.08:
                 target_world[:2] = object_position[:2]
+                snapped_target = name
                 break
         if np.any(target_world[:2] < self.workspace_min) or np.any(target_world[:2] > self.workspace_max):
             return ToolExecution(False, "OUTSIDE_ROBOT_WORKSPACE")
-        planar_target = target_world[:2] - self.robot_base_xy
-        ik_result = self.ik.solve(planar_target, self.robot_joints[:3])
-        if not ik_result.success:
-            return ToolExecution(False, "IK_FAILED")
         start_position = self.ee_position.copy()
         start_joints = self.robot_joints.copy()
-        end_position = np.asarray((target_world[0], target_world[1], 0.70 if high else 0.505), dtype=float)
-        end_joints = start_joints.copy()
-        end_joints[:3] = ik_result.joints
-        end_joints[3] = 0.0 if high else -0.195
+        low_height = (
+            self.box_position[2] + 0.012 + self.cube_half_size
+            if snapped_target == "box"
+            else self.table_z + self.cube_half_size
+        )
+        end_position = np.asarray((target_world[0], target_world[1], 0.72 if high else low_height), dtype=float)
+        if self.mujoco_enabled:
+            ik_success, end_joints, ik_error = self._solve_panda_ik(end_position, start_joints)
+            if not ik_success:
+                return ToolExecution(False, "IK_FAILED", details={"ik_error": round(ik_error, 5)})
+        else:
+            planar_target = target_world[:2] - self.robot_base_xy
+            ik_result = self.ik.solve(planar_target, self.robot_joints[:3])
+            if not ik_result.success:
+                return ToolExecution(False, "IK_FAILED")
+            end_joints = start_joints.copy()
+            end_joints[:3] = ik_result.joints
+            ik_error = ik_result.error
         frames: list[dict[str, Any]] = []
-        for fraction in np.linspace(0.1, 1.0, 10):
-            self.ee_position = start_position + fraction * (end_position - start_position)
+        for fraction in np.linspace(1.0 / 12.0, 1.0, 12):
+            requested_position = start_position + fraction * (end_position - start_position)
             target_joints = start_joints + fraction * (end_joints - start_joints)
-            if self.grasped:
-                self.cube_position = self.ee_position + np.asarray((0.0, 0.0, -0.04))
             self.frame += 1
             if self.mujoco_enabled:
-                self._step_actuators(target_joints, substeps=12)
+                self._step_actuators(target_joints, substeps=20)
             else:
                 self.robot_joints = target_joints
+                self.ee_position = requested_position
+                if self.grasped:
+                    self.cube_position = self.ee_position.copy()
             frames.append(self.state())
         return ToolExecution(
             True,
             frames=frames,
             details={
                 "control_mode": "actuator-mj_step" if self.mujoco_enabled else "direct-kinematics",
+                "ik_error": round(float(ik_error), 5),
                 "simulation_steps": self.simulation_steps,
             },
         )
@@ -405,9 +421,7 @@ class MujocoEngine:
         if opened:
             if self.grasped:
                 self.grasped = False
-                self.cube_position = np.asarray(
-                    (self.ee_position[0], self.ee_position[1], self.table_z + self.cube_half_size), dtype=float
-                )
+                self.cube_position = self.ee_position.copy()
         else:
             distance = float(np.linalg.norm(self.ee_position[:2] - self.cube_position[:2]))
             if distance > 0.065 or self.ee_position[2] > 0.54:
@@ -426,7 +440,7 @@ class MujocoEngine:
                 # away. Detect it at simulation-step resolution and latch the
                 # stabilized grasp at the first genuine finger contact.
                 contact_count = 0
-                for _ in range(80):
+                for _ in range(200):
                     self._step_actuators(self.robot_joints, substeps=1)
                     contact_count = max(contact_count, self._finger_contact_count())
                     if contact_count:
@@ -449,7 +463,7 @@ class MujocoEngine:
                     },
                 )
             self.grasped = True
-            self.cube_position = self.ee_position + np.asarray((0.0, 0.0, -0.04))
+            self.cube_position = self.ee_position.copy()
             if self.mujoco_enabled:
                 self._write_cube_pose()
                 self._mujoco.mj_forward(self.model, self.data)

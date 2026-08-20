@@ -1,0 +1,36 @@
+<mujoco model="physical_ai_panda_playground">
+  <include file="panda.xml"/>
+
+  <option timestep="0.005" gravity="0 0 -9.81" integrator="implicitfast"/>
+  <visual>
+    <headlight diffuse="0.65 0.65 0.65" ambient="0.28 0.28 0.28" specular="0.1 0.1 0.1"/>
+    <global offwidth="512" offheight="512"/>
+    <quality shadowsize="2048"/>
+  </visual>
+
+  <asset>
+    <material name="table_material" rgba="0.72 0.62 0.48 1"/>
+    <material name="red_material" rgba="0.88 0.10 0.08 1"/>
+    <material name="blue_material" rgba="0.06 0.26 0.88 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 -0.4 2.4" diffuse="0.9 0.9 0.9"/>
+    <geom name="floor" type="plane" size="3 3 0.1" rgba="0.80 0.84 0.80 1"/>
+    <body name="table" pos="0 0 0.40">
+      <geom type="box" size="0.58 0.46 0.04" material="table_material"/>
+    </body>
+    <body name="red_cube" pos="-0.20 0.10 0.47">
+      <freejoint name="red_cube_free"/>
+      <geom name="red_cube_geom" type="box" size="0.03 0.03 0.03" material="red_material" mass="0.08" friction="1.5 0.1 0.01"/>
+    </body>
+    <body name="blue_box" mocap="true" pos="0.22 0.12 0.452">
+      <geom type="box" size="0.12 0.10 0.012" material="blue_material"/>
+      <geom type="box" pos="0.11 0 0.055" size="0.01 0.10 0.055" material="blue_material"/>
+      <geom type="box" pos="-0.11 0 0.055" size="0.01 0.10 0.055" material="blue_material"/>
+      <geom type="box" pos="0 0.09 0.055" size="0.10 0.01 0.055" material="blue_material"/>
+      <geom type="box" pos="0 -0.09 0.055" size="0.10 0.01 0.055" material="blue_material"/>
+    </body>
+    <camera name="robot_camera" pos="0 -1.15 1.35" xyaxes="1 0 0 0 0.605 0.796" fovy="49"/>
+  </worldbody>
+</mujoco>

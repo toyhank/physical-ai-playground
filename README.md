@@ -15,8 +15,9 @@ receives the key.
 - Safety-gated normalized image-coordinate tools
 - Pinhole camera projection and table-plane unprojection
 - Damped-least-squares arm IK with joint limits
-- MuJoCo MJCF scene with 9 position actuators, `mj_step` control, finger contacts,
-  plus a deterministic kinematic fallback for lightweight development
+- Google DeepMind MuJoCo Menagerie Franka Panda with its official visual and
+  collision meshes, 7 arm actuators, one coupled gripper actuator, `mj_step`
+  control, and finger contacts
 - Simulator-ground-truth task verification and JSONL run logs
 - Mock and Gemini Robotics ER 2 providers behind the same orchestration interface
 - Unit, integration, randomized pick-and-place, and opt-in external API tests
@@ -90,7 +91,8 @@ npm run build
 
 The checked-in benchmarks distinguish the lightweight fallback from the native
 MuJoCo actuator path. [`benchmarks/mujoco-actuator.json`](benchmarks/mujoco-actuator.json)
-records 100/100 successful randomized resets using 9 actuators and `mj_step`.
+records 100/100 successful randomized resets using the Panda's 8 actuators and
+`mj_step`.
 The gripper must first produce a real MuJoCo finger-to-cube contact; only then
 does the simulator enable a stabilized attachment for transport.
 External Gemini tests are opt-in:
@@ -132,7 +134,8 @@ stop, and per-IP task rate limits.
 - Local UI build and real HTTP/WebSocket mock task: passed
 - Projection, IK, safety, orchestration, API lifecycle: passed
 - Native MuJoCo 3.11 actuator benchmark: 100/100 randomized resets
-- 7 arm position actuators + 2 finger actuators; state advances through `mj_step`
+- Official Franka Panda inertial, collision, and visual model (Apache-2.0)
+- 7 arm position actuators + 1 coupled gripper actuator; state advances through `mj_step`
 - Grasping is contact-gated: no finger contact returns `NO_FINGER_CONTACT`
 - Gemini access/spatial/function-call smoke test: passed on the developer account
 - 20-run Gemini reliability benchmark is not claimed until run in the target

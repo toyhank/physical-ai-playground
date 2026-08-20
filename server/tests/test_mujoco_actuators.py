@@ -6,12 +6,12 @@ import pytest
 from app.simulation.mujoco_engine import MujocoEngine
 
 
-def test_mujoco_uses_nine_position_actuators_and_steps_dynamics() -> None:
+def test_mujoco_uses_panda_actuators_and_steps_dynamics() -> None:
     engine = MujocoEngine(seed=7, enable_mujoco=True)
     if not engine.mujoco_enabled:
         pytest.skip("MuJoCo is not installed in this environment")
 
-    assert engine.model.nu == 9
+    assert engine.model.nu == 8
     assert engine.state()["control_mode"] == "actuator-mj_step"
     initial_time = float(engine.data.time)
     initial_qpos = engine.data.qpos[:7].copy()
@@ -33,7 +33,7 @@ def test_gripper_finger_joints_are_actuated() -> None:
         pytest.skip("MuJoCo is not installed in this environment")
 
     opened = engine.data.qpos[7:9].copy()
-    assert np.all(opened > 0.055)
+    assert np.all(opened > 0.035)
     cube_x, cube_y = engine.projector.world_to_normalized(engine.cube_position)
     assert engine.move(cube_x, cube_y, high=True).success
     assert engine.move(cube_x, cube_y, high=False).success
@@ -46,4 +46,4 @@ def test_gripper_finger_joints_are_actuated() -> None:
     assert result.as_dict()["grasp_constraint"] == "contact-gated-attachment"
     assert engine.grasped
     assert np.all(closed < opened)
-    assert np.allclose(engine.data.ctrl[7:9], 0.0)
+    assert np.isclose(engine.data.ctrl[7], 0.0)

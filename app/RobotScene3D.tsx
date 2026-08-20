@@ -1,20 +1,88 @@
 "use client";
 
-import { Canvas, useThree } from "@react-three/fiber";
-import { useLayoutEffect } from "react";
+import { Canvas, useLoader, useThree } from "@react-three/fiber";
+import { useLayoutEffect, useMemo } from "react";
 import * as THREE from "three";
+import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 
+type RobotBody = { name: string; matrix: number[] };
 type SceneState = {
-  robot: { joints: number[]; finger_joints?: number[]; gripper_open: boolean };
+  robot: { joints: number[]; finger_joints?: number[]; bodies?: RobotBody[]; gripper_open: boolean };
   objects: { name: string; position: number[] }[];
   grasped: boolean;
   verified: boolean;
 };
-
 type Props = { sceneState: SceneState | null; running: boolean };
+type MeshPart = { file: string; color: string };
 
-// MuJoCo is Z-up; Three.js is Y-up. This right-handed mapping preserves the
-// simulator's X axis and maps (x, y, z) -> (x, z, -y).
+const WHITE = "#ffffff";
+const OFF_WHITE = "#e6ebed";
+const BLACK = "#404040";
+const LIGHT_BLUE = "#0a8ac7";
+const GREEN = "#00c853";
+const ASSET_ROOT = "/models/franka_panda/assets";
+
+const ROBOT_MESHES: Record<string, MeshPart[]> = {
+  link0: [
+    ["link0_0.obj", OFF_WHITE], ["link0_1.obj", BLACK], ["link0_2.obj", OFF_WHITE],
+    ["link0_3.obj", BLACK], ["link0_4.obj", OFF_WHITE], ["link0_5.obj", BLACK],
+    ["link0_7.obj", WHITE], ["link0_8.obj", WHITE], ["link0_9.obj", BLACK],
+    ["link0_10.obj", OFF_WHITE], ["link0_11.obj", WHITE],
+  ].map(([file, color]) => ({ file, color })),
+  link1: [{ file: "link1.obj", color: WHITE }],
+  link2: [{ file: "link2.obj", color: WHITE }],
+  link3: [
+    { file: "link3_0.obj", color: WHITE }, { file: "link3_1.obj", color: WHITE },
+    { file: "link3_2.obj", color: WHITE }, { file: "link3_3.obj", color: BLACK },
+  ],
+  link4: [
+    { file: "link4_0.obj", color: WHITE }, { file: "link4_1.obj", color: WHITE },
+    { file: "link4_2.obj", color: BLACK }, { file: "link4_3.obj", color: WHITE },
+  ],
+  link5: [
+    { file: "link5_0.obj", color: BLACK }, { file: "link5_1.obj", color: WHITE },
+    { file: "link5_2.obj", color: WHITE },
+  ],
+  link6: [
+    ["link6_0.obj", OFF_WHITE], ["link6_1.obj", WHITE], ["link6_2.obj", BLACK],
+    ["link6_3.obj", WHITE], ["link6_4.obj", WHITE], ["link6_5.obj", WHITE],
+    ["link6_6.obj", WHITE], ["link6_7.obj", LIGHT_BLUE], ["link6_8.obj", LIGHT_BLUE],
+    ["link6_9.obj", BLACK], ["link6_10.obj", BLACK], ["link6_11.obj", WHITE],
+    ["link6_12.obj", GREEN], ["link6_13.obj", WHITE], ["link6_14.obj", BLACK],
+    ["link6_15.obj", BLACK], ["link6_16.obj", WHITE],
+  ].map(([file, color]) => ({ file, color })),
+  link7: [
+    ["link7_0.obj", WHITE], ["link7_1.obj", BLACK], ["link7_2.obj", BLACK],
+    ["link7_3.obj", BLACK], ["link7_4.obj", BLACK], ["link7_5.obj", BLACK],
+    ["link7_6.obj", BLACK], ["link7_7.obj", WHITE],
+  ].map(([file, color]) => ({ file, color })),
+  hand: [
+    { file: "hand_0.obj", color: OFF_WHITE }, { file: "hand_1.obj", color: BLACK },
+    { file: "hand_2.obj", color: BLACK }, { file: "hand_3.obj", color: WHITE },
+    { file: "hand_4.obj", color: OFF_WHITE },
+  ],
+  left_finger: [
+    { file: "finger_0.obj", color: OFF_WHITE }, { file: "finger_1.obj", color: BLACK },
+  ],
+  right_finger: [
+    { file: "finger_0.obj", color: OFF_WHITE }, { file: "finger_1.obj", color: BLACK },
+  ],
+};
+
+const HOME_BODIES: RobotBody[] = [
+  {name:"link0",matrix:[1,0,0,0,0,1,0,.44,0,0,1,.37,0,0,0,1]},
+  {name:"link1",matrix:[1,0,0,0,0,1,0,.773,0,0,1,.37,0,0,0,1]},
+  {name:"link2",matrix:[.7073883,0,-.7068252,0,.7068252,0,.7073883,.773,0,-1,0,.37,0,0,0,1]},
+  {name:"link3",matrix:[.7073883,-.7068252,0,-.2233568,.7068252,.7073883,0,.9965347,0,0,1,.37,0,0,0,1]},
+  {name:"link4",matrix:[-.0002037,0,-1,-.1649972,-1,0,.0002037,1.0548478,0,1,0,.37,0,0,0,1]},
+  {name:"link5",matrix:[-.0002037,1,0,.2190196,-1,-.0002037,0,1.1372696,0,0,1,.37,0,0,0,1]},
+  {name:"link6",matrix:[1,0,0,.2190196,0,0,-1,1.1372696,0,1,0,.37,0,0,0,1]},
+  {name:"link7",matrix:[.7073883,0,.7068252,.3070196,0,-1,0,1.1372696,.7068252,0,-.7073883,.37,0,0,0,1]},
+  {name:"hand",matrix:[.9999999,0,-.0003981,.3070196,0,-1,0,1.0302696,-.0003981,0,-.9999999,.37,0,0,0,1]},
+  {name:"left_finger",matrix:[.9999999,0,-.0003981,.3070355,0,-1,0,.9718696,-.0003981,0,-.9999999,.41,0,0,0,1]},
+  {name:"right_finger",matrix:[-.9999999,0,.0003981,.3070036,0,-1,0,.9718696,.0003981,0,.9999999,.33,0,0,0,1]},
+];
+
 function toThree(position: number[]): [number, number, number] {
   return [position[0] ?? 0, position[2] ?? 0, -(position[1] ?? 0)];
 }
@@ -34,63 +102,27 @@ function MuJoCoCamera() {
   return null;
 }
 
-function ArmMaterial({ dark = false }: { dark?: boolean }) {
-  return <meshStandardMaterial color={dark ? "#1f2b28" : "#d1dbd6"} roughness={0.42} metalness={0.18} />;
+function PandaMeshPart({ part }: { part: MeshPart }) {
+  const source = useLoader(OBJLoader, `${ASSET_ROOT}/${part.file}`);
+  const object = useMemo(() => {
+    const clone = source.clone(true);
+    clone.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.material = new THREE.MeshStandardMaterial({ color: part.color, roughness: 0.36, metalness: 0.12 });
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+    return clone;
+  }, [source, part.color]);
+  return <primitive object={object} />;
 }
 
-function PlanarLink({ length, radius }: { length: number; radius: number }) {
-  return <mesh position={[length / 2, 0, 0]} rotation={[0, 0, -Math.PI / 2]} castShadow receiveShadow>
-    <capsuleGeometry args={[radius, length, 12, 28]} />
-    <ArmMaterial />
-  </mesh>;
-}
-
-function VerticalCylinder({ radius, halfHeight, dark = false }: { radius: number; halfHeight: number; dark?: boolean }) {
-  return <mesh castShadow receiveShadow>
-    <cylinderGeometry args={[radius, radius, halfHeight * 2, 32]} />
-    <ArmMaterial dark={dark} />
-  </mesh>;
-}
-
-function MuJoCoArm({ joints, fingerJoints, gripperOpen }: { joints: number[]; fingerJoints?: number[]; gripperOpen: boolean }) {
-  const q = [...joints, 0, 0, 0, 0, 0, 0, 0].slice(0, 7);
-  const fingers = fingerJoints ?? [gripperOpen ? 0.06 : 0, gripperOpen ? 0.06 : 0];
-
-  return <group position={[0, 0.44, 0.37]}>
-    <VerticalCylinder radius={0.11} halfHeight={0.07} dark />
-    <group position={[0, 0.295, 0]} rotation={[0, q[0], 0]}>
-      <PlanarLink length={0.33} radius={0.055} />
-      <group position={[0.33, 0, 0]} rotation={[0, q[1], 0]}>
-        <PlanarLink length={0.28} radius={0.05} />
-        <group position={[0.28, 0, 0]} rotation={[0, q[2], 0]}>
-          <PlanarLink length={0.18} radius={0.047} />
-          <group position={[0.18, q[3], 0]}>
-            <VerticalCylinder radius={0.05} halfHeight={0.055} dark />
-            <group rotation={[q[4], 0, 0]}>
-              <VerticalCylinder radius={0.047} halfHeight={0.045} />
-              <group rotation={[0, 0, -q[5]]}>
-                <VerticalCylinder radius={0.043} halfHeight={0.04} dark />
-                <group rotation={[0, q[6], 0]}>
-                  <VerticalCylinder radius={0.06} halfHeight={0.045} />
-                  <VerticalCylinder radius={0.065} halfHeight={0.045} dark />
-                  <group position={[0, 0, -fingers[0]]}>
-                    <mesh position={[0, -0.035, -0.04]} castShadow receiveShadow>
-                      <boxGeometry args={[0.09, 0.11, 0.02]} />
-                      <ArmMaterial dark />
-                    </mesh>
-                  </group>
-                  <group position={[0, 0, fingers[1]]}>
-                    <mesh position={[0, -0.035, 0.04]} castShadow receiveShadow>
-                      <boxGeometry args={[0.09, 0.11, 0.02]} />
-                      <ArmMaterial dark />
-                    </mesh>
-                  </group>
-                </group>
-              </group>
-            </group>
-          </group>
-        </group>
-      </group>
+function PandaBody({ body }: { body: RobotBody }) {
+  const matrix = useMemo(() => new THREE.Matrix4().set(...body.matrix as [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number]), [body.matrix]);
+  return <group matrix={matrix} matrixAutoUpdate={false}>
+    <group rotation={[-Math.PI / 2, 0, 0]}>
+      {(ROBOT_MESHES[body.name] ?? []).map((part) => <PandaMeshPart key={`${body.name}-${part.file}`} part={part} />)}
     </group>
   </group>;
 }
@@ -116,7 +148,7 @@ function Workcell({ sceneState }: Props) {
   const objects = Object.fromEntries((sceneState?.objects ?? []).map((item) => [item.name, item.position]));
   const cubePosition = toThree(objects.red_cube ?? [-0.2, 0.1, 0.47]);
   const boxPosition = toThree(objects.blue_box ?? [0.22, 0.12, 0.452]);
-
+  const bodies = sceneState?.robot.bodies?.length ? sceneState.robot.bodies : HOME_BODIES;
   return <>
     <MuJoCoCamera />
     <color attach="background" args={["#ccd6cc"]} />
@@ -130,18 +162,14 @@ function Workcell({ sceneState }: Props) {
       <boxGeometry args={[1.16, 0.08, 0.92]} />
       <meshStandardMaterial color="#b89e7a" roughness={0.7} />
     </mesh>
-    <MuJoCoArm
-      joints={sceneState?.robot.joints ?? [0.3, 0.8, -1, 0, 0, 0, 0]}
-      fingerJoints={sceneState?.robot.finger_joints}
-      gripperOpen={sceneState?.robot.gripper_open ?? true}
-    />
+    {bodies.map((body) => <PandaBody body={body} key={body.name} />)}
     <RedCube position={cubePosition} />
     <BlueBox position={boxPosition} />
   </>;
 }
 
 export default function RobotScene3D(props: Props) {
-  return <div className="robotCanvas" aria-label="MuJoCo-calibrated robot camera view">
+  return <div className="robotCanvas" aria-label="Franka Panda synchronized with MuJoCo">
     <div className="mujocoViewport">
       <Canvas shadows dpr={[1, 1.75]} camera={{ position: [0, 1.35, 1.15], fov: 49, near: 0.1, far: 20 }}>
         <Workcell {...props} />
