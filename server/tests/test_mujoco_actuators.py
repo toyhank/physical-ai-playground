@@ -34,7 +34,7 @@ def test_gripper_finger_joints_are_actuated() -> None:
 
     opened = engine.data.qpos[7:9].copy()
     assert np.all(opened > 0.035)
-    cube_x, cube_y = engine.projector.world_to_normalized(engine.cube_position)
+    cube_x, cube_y = engine.world_to_camera_normalized(engine.cube_position)
     assert engine.move(cube_x, cube_y, high=True).success
     assert engine.move(cube_x, cube_y, high=False).success
 
@@ -47,3 +47,23 @@ def test_gripper_finger_joints_are_actuated() -> None:
     assert engine.grasped
     assert np.all(closed < opened)
     assert np.isclose(engine.data.ctrl[7], 0.0)
+
+
+def test_robot_camera_is_mounted_on_the_moving_hand() -> None:
+    engine = MujocoEngine(seed=9, enable_mujoco=True)
+    if not engine.mujoco_enabled:
+        pytest.skip("MuJoCo is not installed in this environment")
+
+    camera_id = engine._camera_id
+    assert camera_id is not None
+    hand_id = engine._mujoco.mj_name2id(
+        engine.model, engine._mujoco.mjtObj.mjOBJ_BODY, "hand"
+    )
+    assert int(engine.model.cam_bodyid[camera_id]) == hand_id
+
+    initial_position = engine.data.cam_xpos[camera_id].copy()
+    target = engine.robot_joints.copy()
+    target[0] += 0.2
+    engine._step_actuators(target, substeps=80)
+
+    assert not np.allclose(engine.data.cam_xpos[camera_id], initial_position)

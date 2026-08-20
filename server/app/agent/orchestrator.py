@@ -44,8 +44,18 @@ class AgentOrchestrator:
             return
         raise RuntimeError(f"Unsupported MODEL_PROVIDER: {self.config.model_provider}")
 
-    async def _observe(self, session: SimulationSession, logger: RunLogger, index: int) -> str:
-        image_b64 = await asyncio.to_thread(session.engine.camera_png_base64)
+    async def _observe(
+        self,
+        session: SimulationSession,
+        logger: RunLogger,
+        index: int,
+        *,
+        latch_projection: bool = True,
+    ) -> str:
+        image_b64 = await asyncio.to_thread(
+            session.engine.camera_png_base64,
+            latch_observation=latch_projection,
+        )
         logger.observation(index, base64.b64decode(image_b64))
         event = {"type": "observe", "text": "Captured robot camera", "observation": index}
         logger.event(event)
@@ -99,7 +109,9 @@ class AgentOrchestrator:
                 session, logger, action["name"], action["arguments"]
             )
             observation += 1
-            await self._observe(session, logger, observation)
+            # The mock planner creates one complete batch from observation 0.
+            # Show the moving wrist camera without changing that batch's pixel frame.
+            await self._observe(session, logger, observation, latch_projection=False)
             if not result["success"]:
                 await session.publish(
                     {"type": "model", "text": "Tool failed; re-observing before retry"}

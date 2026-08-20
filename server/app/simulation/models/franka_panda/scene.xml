@@ -31,6 +31,5 @@
       <geom type="box" pos="0 0.09 0.055" size="0.10 0.01 0.055" material="blue_material"/>
       <geom type="box" pos="0 -0.09 0.055" size="0.10 0.01 0.055" material="blue_material"/>
     </body>
-    <camera name="robot_camera" pos="0 -1.15 1.35" xyaxes="1 0 0 0 0.605 0.796" fovy="49"/>
   </worldbody>
 </mujoco>

@@ -74,7 +74,7 @@ def session_state(session_id: str) -> dict:
 def session_camera(session_id: str) -> Response:
     session = get_session(session_id)
     return Response(
-        content=base64.b64decode(session.engine.camera_png_base64()),
+        content=base64.b64decode(session.engine.camera_png_base64(latch_observation=False)),
         media_type="image/png",
         headers={"Cache-Control": "no-store"},
     )

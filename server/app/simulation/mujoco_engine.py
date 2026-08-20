@@ -138,7 +138,10 @@ class MujocoEngine:
     robot_base_xy = np.asarray((0.0, -0.37), dtype=float)
 
     def __init__(self, seed: int = 0, enable_mujoco: bool = True) -> None:
-        self.projector = FixedCameraProjector(table_z=self.table_z)
+        self.projector = FixedCameraProjector(
+            table_z=self.table_z,
+            vertical_fov_degrees=78.0,
+        )
         self.ik = PlanarDampedLeastSquaresIK()
         self.model = None
         self.data = None
@@ -148,8 +151,12 @@ class MujocoEngine:
         self._finger_geom_ids: set[int] = set()
         self._cube_geom_id: int | None = None
         self._gripper_site_id: int | None = None
+        self._camera_id: int | None = None
         self._body_ids: dict[str, int] = {}
         self._target_gripper_rotation: np.ndarray | None = None
+        self._observation_camera_pose: tuple[
+            np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]
+        ] | None = None
         if enable_mujoco:
             try:
                 import mujoco
@@ -174,6 +181,9 @@ class MujocoEngine:
                 }
                 self._gripper_site_id = mujoco.mj_name2id(
                     self.model, mujoco.mjtObj.mjOBJ_SITE, "gripper_site"
+                )
+                self._camera_id = mujoco.mj_name2id(
+                    self.model, mujoco.mjtObj.mjOBJ_CAMERA, "robot_camera"
                 )
                 self._body_ids = {
                     name: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
@@ -207,7 +217,38 @@ class MujocoEngine:
         if self.mujoco_enabled and self._gripper_site_id is not None:
             self.ee_position = self.data.site_xpos[self._gripper_site_id].copy()
             self._target_gripper_rotation = self.data.site_xmat[self._gripper_site_id].reshape(3, 3).copy()
+        self._latch_observation_camera()
         return self.state()
+
+    def _current_camera_pose(
+        self,
+    ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        if self.mujoco_enabled and self._camera_id is not None:
+            rotation = self.data.cam_xmat[self._camera_id].reshape(3, 3)
+            return self.data.cam_xpos[self._camera_id].copy(), (
+                rotation[:, 0].copy(),
+                rotation[:, 1].copy(),
+                -rotation[:, 2].copy(),
+            )
+        return np.asarray(self.projector.position, dtype=float), self.projector._basis()
+
+    def _latch_observation_camera(self) -> None:
+        self._observation_camera_pose = self._current_camera_pose()
+
+    def _observation_pose(
+        self,
+    ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        if self._observation_camera_pose is None:
+            self._latch_observation_camera()
+        assert self._observation_camera_pose is not None
+        return self._observation_camera_pose
+
+    def world_to_camera_normalized(
+        self, point: np.ndarray | tuple[float, float, float]
+    ) -> tuple[int, int]:
+        """Project world coordinates into the most recent model observation."""
+        position, basis = self._observation_pose()
+        return self.projector.world_to_normalized(point, position=position, basis=basis)
 
     def _sync_mujoco(self) -> None:
         if not self.mujoco_enabled:
@@ -360,7 +401,13 @@ class MujocoEngine:
         }
 
     def move(self, x: int, y: int, high: bool) -> ToolExecution:
-        target_world = self.projector.image_point_to_world(x, y)
+        camera_position, camera_basis = self._observation_pose()
+        target_world = self.projector.image_point_to_world(
+            x,
+            y,
+            position=camera_position,
+            basis=camera_basis,
+        )
         # Robotics ER reports approximate normalized image points. When that
         # projection lands close to a known scene object, lock the Cartesian
         # target to its measured MuJoCo pose so the last centimetres of the
@@ -486,8 +533,9 @@ class MujocoEngine:
         return bool(xy_inside and z_inside and not self.grasped)
 
     def deterministic_pick_place(self) -> list[dict[str, Any]]:
-        cube_x, cube_y = self.projector.world_to_normalized(self.cube_position)
-        box_x, box_y = self.projector.world_to_normalized(self.box_position)
+        self._latch_observation_camera()
+        cube_x, cube_y = self.world_to_camera_normalized(self.cube_position)
+        box_x, box_y = self.world_to_camera_normalized(self.box_position)
         actions = [
             ("set_gripper_state", {"opened": True}),
             ("move", {"x": cube_x, "y": cube_y, "high": True}),
@@ -507,7 +555,9 @@ class MujocoEngine:
                 break
         return results
 
-    def camera_png_base64(self) -> str:
+    def camera_png_base64(self, *, latch_observation: bool = True) -> str:
+        if latch_observation:
+            self._latch_observation_camera()
         if self.mujoco_enabled:
             try:
                 pixels = _get_render_service().render(
@@ -519,7 +569,7 @@ class MujocoEngine:
                 return self._encode_png(image)
             except (RuntimeError, OSError):
                 pass
-        return self._encode_png(self._fallback_camera_image())
+        return self._encode_png(self._fallback_camera_image(live=not latch_observation))
 
     @staticmethod
     def _encode_png(image: Image.Image) -> str:
@@ -527,12 +577,20 @@ class MujocoEngine:
         image.save(output, format="PNG")
         return base64.b64encode(output.getvalue()).decode("ascii")
 
-    def _fallback_camera_image(self) -> Image.Image:
+    def _fallback_camera_image(self, *, live: bool = False) -> Image.Image:
         image = Image.new("RGB", (512, 512), "#c9d2c9")
         draw = ImageDraw.Draw(image)
         draw.rounded_rectangle((28, 28, 484, 484), radius=18, fill="#d6c7ad", outline="#7c776b", width=4)
-        cube_x, cube_y = self.projector.world_to_normalized(self.cube_position)
-        box_x, box_y = self.projector.world_to_normalized(self.box_position)
+        if live:
+            position, basis = self._current_camera_pose()
+        else:
+            position, basis = self._observation_pose()
+        cube_x, cube_y = self.projector.world_to_normalized(
+            self.cube_position, position=position, basis=basis
+        )
+        box_x, box_y = self.projector.world_to_normalized(
+            self.box_position, position=position, basis=basis
+        )
         cx, cy = cube_x * 512 // 1000, cube_y * 512 // 1000
         bx, by = box_x * 512 // 1000, box_y * 512 // 1000
         draw.rectangle((cx - 17, cy - 17, cx + 17, cy + 17), fill="#df3029", outline="#8b1511", width=4)

@@ -10,5 +10,5 @@
   "episodes": 100,
   "successes": 100,
   "success_rate": 1.0,
-  "tests": "12 passed, 1 external Gemini test skipped"
+  "tests": "13 passed, 1 external Gemini test skipped"
 }

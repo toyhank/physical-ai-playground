@@ -13,7 +13,7 @@ receives the key.
 - Browser control room with a live scene, camera view, agent trace, run/stop/reset
 - FastAPI session service and WebSocket event stream
 - Safety-gated normalized image-coordinate tools
-- Pinhole camera projection and table-plane unprojection
+- Live eye-in-hand Panda wrist camera with observation-latched pixel-to-world projection
 - Damped-least-squares arm IK with joint limits
 - Google DeepMind MuJoCo Menagerie Franka Panda with its official visual and
   collision meshes, 7 arm actuators, one coupled gripper actuator, `mj_step`
@@ -93,6 +93,9 @@ The checked-in benchmarks distinguish the lightweight fallback from the native
 MuJoCo actuator path. [`benchmarks/mujoco-actuator.json`](benchmarks/mujoco-actuator.json)
 records 100/100 successful randomized resets using the Panda's 8 actuators and
 `mj_step`.
+The model sees the RGB image rendered from a camera rigidly mounted to the Panda
+hand. Pixel coordinates are resolved against the exact camera pose that produced
+that observation, even while the wrist moves during a multi-call action batch.
 The gripper must first produce a real MuJoCo finger-to-cube contact; only then
 does the simulator enable a stabilized attachment for transport.
 External Gemini tests are opt-in:
