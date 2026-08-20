@@ -140,7 +140,7 @@ class MujocoEngine:
     def __init__(self, seed: int = 0, enable_mujoco: bool = True) -> None:
         self.projector = FixedCameraProjector(
             table_z=self.table_z,
-            vertical_fov_degrees=78.0,
+            vertical_fov_degrees=86.0,
         )
         self.ik = PlanarDampedLeastSquaresIK()
         self.model = None

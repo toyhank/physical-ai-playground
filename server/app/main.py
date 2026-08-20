@@ -61,7 +61,11 @@ def create_session(payload: CreateSessionRequest) -> dict:
         session = manager.create(payload.seed)
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
-    return {"session_id": session.id, "state": session.engine.state()}
+    return {
+        "session_id": session.id,
+        "state": session.engine.state(),
+        "model_provider": settings.model_provider,
+    }
 
 
 @app.get("/api/sessions/{session_id}")
