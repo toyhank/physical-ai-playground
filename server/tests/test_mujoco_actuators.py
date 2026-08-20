@@ -67,3 +67,15 @@ def test_robot_camera_is_mounted_on_the_moving_hand() -> None:
     engine._step_actuators(target, substeps=80)
 
     assert not np.allclose(engine.data.cam_xpos[camera_id], initial_position)
+
+
+def test_observation_rays_resolve_cube_and_container_geometry() -> None:
+    engine = MujocoEngine(seed=23, enable_mujoco=True)
+    if not engine.mujoco_enabled:
+        pytest.skip("MuJoCo is not installed in this environment")
+
+    cube_x, cube_y = engine.world_to_camera_normalized(engine.cube_position)
+    box_x, box_y = engine.world_to_camera_normalized(engine.box_position)
+
+    assert engine._observation_ray_target(cube_x, cube_y) == "cube"
+    assert engine._observation_ray_target(box_x, box_y) == "box"

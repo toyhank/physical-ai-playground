@@ -157,6 +157,9 @@ class MujocoEngine:
         self._observation_camera_pose: tuple[
             np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray]
         ] | None = None
+        self._observation_qpos: np.ndarray | None = None
+        self._observation_mocap_pos: np.ndarray | None = None
+        self._observation_mocap_quat: np.ndarray | None = None
         if enable_mujoco:
             try:
                 import mujoco
@@ -203,7 +206,10 @@ class MujocoEngine:
         for _ in range(100):
             cube = np.asarray((rng.uniform(-0.34, -0.08), rng.uniform(0.02, 0.28)), dtype=float)
             box = np.asarray((rng.uniform(0.08, 0.34), rng.uniform(0.02, 0.28)), dtype=float)
-            if np.linalg.norm(cube - box) >= 0.24:
+            # Keep both objects spatially separated and independently visible
+            # from the initial wrist-camera pose. World distance alone can put
+            # the container directly in front of the cube in image space.
+            if np.linalg.norm(cube - box) >= 0.24 and box[0] - cube[0] >= 0.28:
                 break
         self.cube_position = np.asarray((cube[0], cube[1], self.table_z + self.cube_half_size), dtype=float)
         self.box_position = np.asarray((box[0], box[1], self.table_z + 0.012), dtype=float)
@@ -234,6 +240,10 @@ class MujocoEngine:
 
     def _latch_observation_camera(self) -> None:
         self._observation_camera_pose = self._current_camera_pose()
+        if self.mujoco_enabled:
+            self._observation_qpos = self.data.qpos.copy()
+            self._observation_mocap_pos = self.data.mocap_pos.copy()
+            self._observation_mocap_quat = self.data.mocap_quat.copy()
 
     def _observation_pose(
         self,
@@ -249,6 +259,43 @@ class MujocoEngine:
         """Project world coordinates into the most recent model observation."""
         position, basis = self._observation_pose()
         return self.projector.world_to_normalized(point, position=position, basis=basis)
+
+    def _observation_ray_target(self, x: int, y: int) -> str | None:
+        """Resolve a clicked RGB pixel against the exact MuJoCo observation frame."""
+        if (
+            not self.mujoco_enabled
+            or self._observation_qpos is None
+            or self._observation_mocap_pos is None
+            or self._observation_mocap_quat is None
+        ):
+            return None
+        camera_position, camera_basis = self._observation_pose()
+        origin, ray = self.projector.image_ray(
+            x, y, position=camera_position, basis=camera_basis
+        )
+        observation = self._mujoco.MjData(self.model)
+        observation.qpos[:] = self._observation_qpos
+        observation.mocap_pos[:] = self._observation_mocap_pos
+        observation.mocap_quat[:] = self._observation_mocap_quat
+        self._mujoco.mj_forward(self.model, observation)
+        geom_id = np.asarray((-1,), dtype=np.int32)
+        distance = self._mujoco.mj_ray(
+            self.model,
+            observation,
+            origin,
+            ray,
+            None,
+            True,
+            -1,
+            geom_id,
+        )
+        if distance < 0 or geom_id[0] < 0:
+            return None
+        body_id = int(self.model.geom_bodyid[int(geom_id[0])])
+        body_name = self._mujoco.mj_id2name(
+            self.model, self._mujoco.mjtObj.mjOBJ_BODY, body_id
+        )
+        return {"red_cube": "cube", "blue_box": "box"}.get(body_name)
 
     def _sync_mujoco(self) -> None:
         if not self.mujoco_enabled:
@@ -412,12 +459,17 @@ class MujocoEngine:
         # projection lands close to a known scene object, lock the Cartesian
         # target to its measured MuJoCo pose so the last centimetres of the
         # approach are handled by physics instead of projection error.
-        snapped_target: str | None = None
-        for name, object_position in (("cube", self.cube_position), ("box", self.box_position)):
-            if np.linalg.norm(target_world[:2] - object_position[:2]) <= 0.08:
-                target_world[:2] = object_position[:2]
-                snapped_target = name
-                break
+        snapped_target = self._observation_ray_target(x, y)
+        if snapped_target is not None:
+            target_world[:2] = (
+                self.cube_position[:2] if snapped_target == "cube" else self.box_position[:2]
+            )
+        else:
+            for name, object_position in (("cube", self.cube_position), ("box", self.box_position)):
+                if np.linalg.norm(target_world[:2] - object_position[:2]) <= 0.08:
+                    target_world[:2] = object_position[:2]
+                    snapped_target = name
+                    break
         if np.any(target_world[:2] < self.workspace_min) or np.any(target_world[:2] > self.workspace_max):
             return ToolExecution(False, "OUTSIDE_ROBOT_WORKSPACE")
         start_position = self.ee_position.copy()

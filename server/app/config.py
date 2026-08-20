@@ -2,6 +2,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+LOCAL_ENV_PATH = Path(__file__).resolve().parents[1] / ".env.local"
+load_dotenv(LOCAL_ENV_PATH, override=False)
 
 
 @dataclass(frozen=True)

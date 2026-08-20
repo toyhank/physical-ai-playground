@@ -46,10 +46,17 @@ python -m venv server/.venv
 server/.venv/Scripts/pip.exe install -r server/requirements.txt
 ```
 
+For local backend settings, create `server/.env.local` (it is ignored by Git):
+
+```dotenv
+MODEL_PROVIDER=mock
+GEMINI_MODEL=gemini-robotics-er-2-preview
+GEMINI_API_KEY=
+```
+
 Terminal 1:
 
 ```powershell
-$env:MODEL_PROVIDER="mock"
 server/.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir server --reload
 ```
 
@@ -64,11 +71,14 @@ Open `http://localhost:3000`, keep the example prompt, and press **Run task**.
 
 ## Gemini Robotics ER 2
 
-Set the key only in your local shell or deployment secret manager:
+Set the provider and key in the ignored `server/.env.local` file:
 
-```powershell
-$env:GEMINI_API_KEY="..."
-$env:MODEL_PROVIDER="gemini"
+```dotenv
+MODEL_PROVIDER=gemini
+GEMINI_MODEL=gemini-robotics-er-2-preview
+GEMINI_API_KEY=your-key
+MAX_AGENT_STEPS=20
+MAX_TASK_SECONDS=240
 ```
 
 Never commit the key or put it in a `NEXT_PUBLIC_*` variable. Run the standalone
@@ -96,6 +106,8 @@ records 100/100 successful randomized resets using the Panda's 8 actuators and
 The model sees the RGB image rendered from a camera rigidly mounted to the Panda
 hand. Pixel coordinates are resolved against the exact camera pose that produced
 that observation, even while the wrist moves during a multi-call action batch.
+MuJoCo ray-casts those pixels against the saved observation geometry, so points
+on the raised container resolve to the container instead of the table behind it.
 The gripper must first produce a real MuJoCo finger-to-cube contact; only then
 does the simulator enable a stabilized attachment for transport.
 External Gemini tests are opt-in:

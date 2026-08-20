@@ -45,6 +45,22 @@ class FixedCameraProjector:
         position: np.ndarray | tuple[float, float, float] | None = None,
         basis: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
     ) -> np.ndarray:
+        origin, camera_ray = self.image_ray(x, y, position=position, basis=basis)
+        if abs(camera_ray[2]) < 1e-9:
+            raise ValueError("camera ray is parallel to the table")
+        distance = (self.table_z - origin[2]) / camera_ray[2]
+        if distance <= 0:
+            raise ValueError("camera ray does not intersect the table in front of the camera")
+        return origin + distance * camera_ray
+
+    def image_ray(
+        self,
+        x: float,
+        y: float,
+        *,
+        position: np.ndarray | tuple[float, float, float] | None = None,
+        basis: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         if not 0 <= x <= 1000 or not 0 <= y <= 1000:
             raise ValueError("normalized coordinates must be within 0..1000")
         px, py = self.normalized_to_pixel(x, y)
@@ -56,12 +72,7 @@ class FixedCameraProjector:
         )
         camera_ray /= np.linalg.norm(camera_ray)
         origin = np.asarray(self.position if position is None else position, dtype=float)
-        if abs(camera_ray[2]) < 1e-9:
-            raise ValueError("camera ray is parallel to the table")
-        distance = (self.table_z - origin[2]) / camera_ray[2]
-        if distance <= 0:
-            raise ValueError("camera ray does not intersect the table in front of the camera")
-        return origin + distance * camera_ray
+        return origin, camera_ray
 
     def world_to_normalized(
         self,
