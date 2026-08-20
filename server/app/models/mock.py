@@ -12,16 +12,8 @@ class MockRobotModel:
 
     def plan(self, prompt: str, engine: MujocoEngine) -> list[dict[str, Any]]:
         del prompt  # All supported languages use the same visual task loop.
-        cube_x, cube_y = engine.world_to_camera_normalized(engine.cube_position)
-        box_x, box_y = engine.world_to_camera_normalized(engine.box_position)
+        del engine
         return [
-            {"name": "set_gripper_state", "arguments": {"opened": True}},
-            {"name": "move", "arguments": {"x": cube_x, "y": cube_y, "high": True}},
-            {"name": "move", "arguments": {"x": cube_x, "y": cube_y, "high": False}},
-            {"name": "set_gripper_state", "arguments": {"opened": False}},
-            {"name": "move", "arguments": {"x": cube_x, "y": cube_y, "high": True}},
-            {"name": "move", "arguments": {"x": box_x, "y": box_y, "high": True}},
-            {"name": "move", "arguments": {"x": box_x, "y": box_y, "high": False}},
-            {"name": "set_gripper_state", "arguments": {"opened": True}},
-            {"name": "move", "arguments": {"x": box_x, "y": box_y, "high": True}},
+            {"name": "pick_object", "arguments": {"object_id": "red_cube"}},
+            {"name": "place_object", "arguments": {"container_id": "blue_box"}},
         ]

@@ -51,16 +51,27 @@ class AgentOrchestrator:
         index: int,
         *,
         latch_projection: bool = True,
-    ) -> str:
-        image_b64 = await asyncio.to_thread(
+    ) -> tuple[str, str]:
+        scene_b64 = await asyncio.to_thread(
             session.engine.camera_png_base64,
+            camera="scene",
             latch_observation=latch_projection,
         )
-        logger.observation(index, base64.b64decode(image_b64))
-        event = {"type": "observe", "text": "Captured robot camera", "observation": index}
+        wrist_b64 = await asyncio.to_thread(
+            session.engine.camera_png_base64,
+            camera="wrist",
+            latch_observation=False,
+        )
+        logger.observation(index, base64.b64decode(scene_b64), "scene")
+        logger.observation(index, base64.b64decode(wrist_b64), "wrist")
+        event = {
+            "type": "observe",
+            "text": "Captured fixed scene + wrist cameras",
+            "observation": index,
+        }
         logger.event(event)
         await session.publish(event)
-        return image_b64
+        return scene_b64, wrist_b64
 
     async def _execute_action(
         self,
@@ -108,6 +119,8 @@ class AgentOrchestrator:
             result = await self._execute_action(
                 session, logger, action["name"], action["arguments"]
             )
+            if session.engine.verify_task():
+                break
             observation += 1
             # The mock planner creates one complete batch from observation 0.
             # Show the moving wrist camera without changing that batch's pixel frame.
@@ -123,8 +136,10 @@ class AgentOrchestrator:
         from app.models.gemini_robotics import GeminiRoboticsProvider
 
         provider = GeminiRoboticsProvider(model_id=self.config.model_id)
-        image_b64 = await self._observe(session, logger, 0)
-        interaction = await asyncio.to_thread(provider.start, prompt, image_b64)
+        scene_b64, wrist_b64 = await self._observe(session, logger, 0)
+        interaction = await asyncio.to_thread(
+            provider.start, prompt, scene_b64, wrist_b64
+        )
         observation = 0
         while session.tools.steps < self.config.max_agent_steps:
             calls = provider.calls(interaction)
@@ -141,9 +156,15 @@ class AgentOrchestrator:
                 results.append((call, result))
                 if session.tools.steps >= self.config.max_agent_steps:
                     break
+            if session.engine.verify_task():
+                break
             observation += 1
-            image_b64 = await self._observe(session, logger, observation)
+            scene_b64, wrist_b64 = await self._observe(session, logger, observation)
             interaction = await asyncio.to_thread(
-                provider.continue_after_tools, interaction, results, image_b64
+                provider.continue_after_tools,
+                interaction,
+                results,
+                scene_b64,
+                wrist_b64,
             )
         await self._finish(session, logger)

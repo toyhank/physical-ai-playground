@@ -34,8 +34,8 @@ class RunLogger:
             self.metadata["steps"] += 1
             self._write_metadata()
 
-    def observation(self, index: int, png_bytes: bytes) -> None:
-        (self.observations / f"{index:03d}.png").write_bytes(png_bytes)
+    def observation(self, index: int, png_bytes: bytes, camera: str = "scene") -> None:
+        (self.observations / f"{camera}_{index:03d}.png").write_bytes(png_bytes)
 
     def finish(self, success: bool, failure_reason: str | None = None) -> None:
         self.metadata["duration_seconds"] = round((datetime.now(UTC) - self._started).total_seconds(), 3)
@@ -48,4 +48,3 @@ class RunLogger:
         (self.directory / "metadata.json").write_text(
             json.dumps(self.metadata, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-

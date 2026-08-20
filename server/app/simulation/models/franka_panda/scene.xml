@@ -16,6 +16,7 @@
 
   <worldbody>
     <light pos="0 -0.4 2.4" diffuse="0.9 0.9 0.9"/>
+    <camera name="scene_camera" pos="0 1.4 1.6" xyaxes="-1 0 0 0 -0.635 0.773" fovy="49"/>
     <geom name="floor" type="plane" size="3 3 0.1" rgba="0.80 0.84 0.80 1"/>
     <body name="table" pos="0 0 0.40">
       <geom type="box" size="0.58 0.46 0.04" material="table_material"/>

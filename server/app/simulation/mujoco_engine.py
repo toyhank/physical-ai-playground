@@ -55,14 +55,14 @@ class _NativeRenderService:
                 request = self._requests.get()
                 if request is None:
                     break
-                qpos, mocap_pos, mocap_quat, finished, result = request
+                qpos, mocap_pos, mocap_quat, camera_name, finished, result = request
                 try:
                     data.qpos[:] = qpos
                     data.qvel[:] = 0.0
                     data.mocap_pos[:] = mocap_pos
                     data.mocap_quat[:] = mocap_quat
                     mujoco.mj_forward(model, data)
-                    renderer.update_scene(data, camera="robot_camera")
+                    renderer.update_scene(data, camera=camera_name)
                     result["pixels"] = renderer.render().copy()
                 except BaseException as error:  # Propagate native-render failures to the caller.
                     result["error"] = error
@@ -75,7 +75,13 @@ class _NativeRenderService:
             if renderer is not None:
                 renderer.close()
 
-    def render(self, qpos: np.ndarray, mocap_pos: np.ndarray, mocap_quat: np.ndarray) -> np.ndarray:
+    def render(
+        self,
+        qpos: np.ndarray,
+        mocap_pos: np.ndarray,
+        mocap_quat: np.ndarray,
+        camera_name: str,
+    ) -> np.ndarray:
         if not self._ready.wait(timeout=30):
             raise RuntimeError("MUJOCO_RENDERER_START_TIMEOUT")
         if self._startup_error is not None:
@@ -84,7 +90,9 @@ class _NativeRenderService:
             raise RuntimeError("MUJOCO_RENDERER_CLOSED")
         finished = Event()
         result: dict[str, Any] = {}
-        self._requests.put((qpos.copy(), mocap_pos.copy(), mocap_quat.copy(), finished, result))
+        self._requests.put(
+            (qpos.copy(), mocap_pos.copy(), mocap_quat.copy(), camera_name, finished, result)
+        )
         if not finished.wait(timeout=30):
             raise RuntimeError("MUJOCO_RENDER_TIMEOUT")
         if "error" in result:
@@ -160,6 +168,7 @@ class MujocoEngine:
         self._observation_qpos: np.ndarray | None = None
         self._observation_mocap_pos: np.ndarray | None = None
         self._observation_mocap_quat: np.ndarray | None = None
+        self._observed_objects: dict[str, np.ndarray] = {}
         if enable_mujoco:
             try:
                 import mujoco
@@ -224,7 +233,19 @@ class MujocoEngine:
             self.ee_position = self.data.site_xpos[self._gripper_site_id].copy()
             self._target_gripper_rotation = self.data.site_xmat[self._gripper_site_id].reshape(3, 3).copy()
         self._latch_observation_camera()
+        self._latch_world_model()
         return self.state()
+
+    def _latch_world_model(self) -> None:
+        """Snapshot perception results in the robot base/world frame.
+
+        MuJoCo ground truth stands in for an RGB-D pose estimator in this demo;
+        downstream skills consume stable object poses instead of image pixels.
+        """
+        self._observed_objects = {
+            "red_cube": self.cube_position.copy(),
+            "blue_box": self.box_position.copy(),
+        }
 
     def _current_camera_pose(
         self,
@@ -470,7 +491,16 @@ class MujocoEngine:
                     target_world[:2] = object_position[:2]
                     snapped_target = name
                     break
-        if np.any(target_world[:2] < self.workspace_min) or np.any(target_world[:2] > self.workspace_max):
+        return self._move_to_world(target_world[:2], high, snapped_target)
+
+    def _move_to_world(
+        self,
+        target_xy: np.ndarray | tuple[float, float],
+        high: bool,
+        snapped_target: str | None = None,
+    ) -> ToolExecution:
+        target_world = np.asarray(target_xy, dtype=float)
+        if np.any(target_world < self.workspace_min) or np.any(target_world > self.workspace_max):
             return ToolExecution(False, "OUTSIDE_ROBOT_WORKSPACE")
         start_position = self.ee_position.copy()
         start_joints = self.robot_joints.copy()
@@ -513,6 +543,70 @@ class MujocoEngine:
                 "ik_error": round(float(ik_error), 5),
                 "simulation_steps": self.simulation_steps,
             },
+        )
+
+    def _execute_skill(
+        self, skill: str, actions: list[tuple[str, dict[str, Any]]]
+    ) -> ToolExecution:
+        frames: list[dict[str, Any]] = []
+        stages: list[dict[str, Any]] = []
+        for name, arguments in actions:
+            if name == "move_world":
+                result = self._move_to_world(**arguments)
+            else:
+                result = self.set_gripper_state(**arguments)
+            frames.extend(result.frames or [])
+            stages.append({"name": name, "arguments": arguments, "result": result.as_dict()})
+            if not result.success:
+                return ToolExecution(
+                    False,
+                    result.error,
+                    frames=frames,
+                    details={"skill": skill, "failed_stage": name, "stages": stages},
+                )
+        return ToolExecution(
+            True,
+            frames=frames,
+            details={"skill": skill, "stages": stages, "simulation_steps": self.simulation_steps},
+        )
+
+    def pick_object(self, object_id: str) -> ToolExecution:
+        if object_id != "red_cube":
+            return ToolExecution(False, "UNKNOWN_OBJECT")
+        if self.grasped:
+            return ToolExecution(False, "GRIPPER_ALREADY_HOLDING_OBJECT")
+        target = self._observed_objects.get(object_id)
+        if target is None:
+            return ToolExecution(False, "OBJECT_NOT_OBSERVED")
+        xy = [float(target[0]), float(target[1])]
+        return self._execute_skill(
+            "pick_object",
+            [
+                ("gripper", {"opened": True}),
+                ("move_world", {"target_xy": xy, "high": True, "snapped_target": "cube"}),
+                ("move_world", {"target_xy": xy, "high": False, "snapped_target": "cube"}),
+                ("gripper", {"opened": False}),
+                ("move_world", {"target_xy": xy, "high": True, "snapped_target": "cube"}),
+            ],
+        )
+
+    def place_object(self, container_id: str) -> ToolExecution:
+        if container_id != "blue_box":
+            return ToolExecution(False, "UNKNOWN_CONTAINER")
+        if not self.grasped:
+            return ToolExecution(False, "NOT_HOLDING_OBJECT")
+        target = self._observed_objects.get(container_id)
+        if target is None:
+            return ToolExecution(False, "CONTAINER_NOT_OBSERVED")
+        xy = [float(target[0]), float(target[1])]
+        return self._execute_skill(
+            "place_object",
+            [
+                ("move_world", {"target_xy": xy, "high": True, "snapped_target": "box"}),
+                ("move_world", {"target_xy": xy, "high": False, "snapped_target": "box"}),
+                ("gripper", {"opened": True}),
+                ("move_world", {"target_xy": xy, "high": True, "snapped_target": "box"}),
+            ],
         )
 
     def set_gripper_state(self, opened: bool) -> ToolExecution:
@@ -607,15 +701,23 @@ class MujocoEngine:
                 break
         return results
 
-    def camera_png_base64(self, *, latch_observation: bool = True) -> str:
+    def camera_png_base64(
+        self, *, camera: str = "wrist", latch_observation: bool = True
+    ) -> str:
+        camera_name = {"wrist": "robot_camera", "scene": "scene_camera"}.get(camera)
+        if camera_name is None:
+            raise ValueError("UNKNOWN_CAMERA")
         if latch_observation:
-            self._latch_observation_camera()
+            self._latch_world_model()
+            if camera == "wrist":
+                self._latch_observation_camera()
         if self.mujoco_enabled:
             try:
                 pixels = _get_render_service().render(
                     self.data.qpos,
                     self.data.mocap_pos,
                     self.data.mocap_quat,
+                    camera_name,
                 )
                 image = Image.fromarray(pixels)
                 return self._encode_png(image)

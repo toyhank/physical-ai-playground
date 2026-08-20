@@ -23,6 +23,14 @@ class RobotTools:
             )
         elif name == "set_gripper_state":
             validation = self.safety.validate_gripper(arguments.get("opened"), self.steps, self.stopped)
+        elif name == "pick_object":
+            validation = self.safety.validate_semantic_skill(
+                arguments.get("object_id"), {"red_cube"}, self.steps, self.stopped
+            )
+        elif name == "place_object":
+            validation = self.safety.validate_semantic_skill(
+                arguments.get("container_id"), {"blue_box"}, self.steps, self.stopped
+            )
         else:
             return ToolExecution(False, "UNKNOWN_TOOL")
         if not validation.allowed:
@@ -30,5 +38,8 @@ class RobotTools:
         self.steps += 1
         if name == "move":
             return self.engine.move(arguments["x"], arguments["y"], arguments["high"])
-        return self.engine.set_gripper_state(arguments["opened"])
-
+        if name == "set_gripper_state":
+            return self.engine.set_gripper_state(arguments["opened"])
+        if name == "pick_object":
+            return self.engine.pick_object(arguments["object_id"])
+        return self.engine.place_object(arguments["container_id"])

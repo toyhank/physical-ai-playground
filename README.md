@@ -1,7 +1,7 @@
 # Physical AI Playground
 
 A small, deployable Physical AI demo: type a natural-language task, watch a
-robot arm observe the scene, issue `move` / `set_gripper_state` function calls,
+robot arm observe the scene, issue `pick_object` / `place_object` skill calls,
 and verify the result from simulator state.
 
 The default `mock` provider is deterministic and needs no API key. Set
@@ -12,8 +12,8 @@ receives the key.
 
 - Browser control room with a live scene, camera view, agent trace, run/stop/reset
 - FastAPI session service and WebSocket event stream
-- Safety-gated normalized image-coordinate tools
-- Live eye-in-hand Panda wrist camera with observation-latched pixel-to-world projection
+- Fixed global and eye-in-hand Panda wrist RGB cameras
+- Safety-gated semantic skills backed by a stable world-frame object snapshot
 - Damped-least-squares arm IK with joint limits
 - Google DeepMind MuJoCo Menagerie Franka Panda with its official visual and
   collision meshes, 7 arm actuators, one coupled gripper actuator, `mj_step`
@@ -32,8 +32,9 @@ Browser (vinext/React)
 FastAPI session manager
   └─ Agent orchestrator
        ├─ mock provider OR Gemini Robotics ER 2
-       ├─ safety gateway: move / set_gripper_state
-       └─ MuJoCo engine → camera → verifier → run log
+       ├─ safety gateway: pick_object / place_object
+       ├─ deterministic skill controller → Cartesian IK → actuators
+       └─ MuJoCo engine → dual cameras → verifier → run log
 ```
 
 ## Local quick start
@@ -103,11 +104,12 @@ The checked-in benchmarks distinguish the lightweight fallback from the native
 MuJoCo actuator path. [`benchmarks/mujoco-actuator.json`](benchmarks/mujoco-actuator.json)
 records 100/100 successful randomized resets using the Panda's 8 actuators and
 `mj_step`.
-The model sees the RGB image rendered from a camera rigidly mounted to the Panda
-hand. Pixel coordinates are resolved against the exact camera pose that produced
-that observation, even while the wrist moves during a multi-call action batch.
-MuJoCo ray-casts those pixels against the saved observation geometry, so points
-on the raised container resolve to the container instead of the table behind it.
+The model sees both a fixed global RGB view and an RGB view from a camera rigidly
+mounted to the Panda hand. It chooses named task-level skills instead of guessing
+pixels after the wrist moves. In this simulator, MuJoCo ground truth stands in
+for the RGB-D pose estimator that a physical deployment would use to maintain
+object poses in the robot base frame. The controller deterministically expands
+each skill into approach, descent, grasp/release, lift, transfer, and retreat.
 The gripper must first produce a real MuJoCo finger-to-cube contact; only then
 does the simulator enable a stabilized attachment for transport.
 External Gemini tests are opt-in:

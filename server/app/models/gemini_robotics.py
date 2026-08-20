@@ -13,26 +13,26 @@ MODEL_ID = "gemini-robotics-er-2-preview"
 TOOLS = [
     {
         "type": "function",
-        "name": "move",
-        "description": "Move the gripper to normalized image coordinates; high means safely above the table.",
+        "name": "pick_object",
+        "description": "Pick a visible object using the robot's verified grasp skill.",
         "parameters": {
             "type": "object",
             "properties": {
-                "x": {"type": "integer", "minimum": 0, "maximum": 1000},
-                "y": {"type": "integer", "minimum": 0, "maximum": 1000},
-                "high": {"type": "boolean"},
+                "object_id": {"type": "string", "enum": ["red_cube"]},
             },
-            "required": ["x", "y", "high"],
+            "required": ["object_id"],
         },
     },
     {
         "type": "function",
-        "name": "set_gripper_state",
-        "description": "Open or close the robot gripper.",
+        "name": "place_object",
+        "description": "Place the currently held object into a visible container using a verified place skill.",
         "parameters": {
             "type": "object",
-            "properties": {"opened": {"type": "boolean"}},
-            "required": ["opened"],
+            "properties": {
+                "container_id": {"type": "string", "enum": ["blue_box"]},
+            },
+            "required": ["container_id"],
         },
     },
 ]
@@ -49,22 +49,25 @@ class GeminiRoboticsProvider:
         self.model_id = model_id
 
     @staticmethod
-    def _image_input(image_b64: str, text: str) -> list[dict[str, Any]]:
+    def _image_input(scene_b64: str, wrist_b64: str, text: str) -> list[dict[str, Any]]:
         return [
             {
                 "type": "user_input",
                 "content": [
-                    {"type": "image", "data": image_b64, "mime_type": "image/png"},
+                    {"type": "text", "text": "Image 1 — fixed global scene camera:"},
+                    {"type": "image", "data": scene_b64, "mime_type": "image/png"},
+                    {"type": "text", "text": "Image 2 — Panda wrist camera:"},
+                    {"type": "image", "data": wrist_b64, "mime_type": "image/png"},
                     {"type": "text", "text": text},
                 ],
             }
         ]
 
-    def start(self, prompt: str, image_b64: str) -> Any:
+    def start(self, prompt: str, scene_b64: str, wrist_b64: str) -> Any:
         return self.client.interactions.create(
             model=self.model_id,
             system_instruction=ROBOT_SYSTEM_PROMPT,
-            input=self._image_input(image_b64, prompt),
+            input=self._image_input(scene_b64, wrist_b64, prompt),
             tools=TOOLS,
             generation_config={"thinking_level": "low"},
         )
@@ -74,7 +77,11 @@ class GeminiRoboticsProvider:
         return [step for step in interaction.steps if step.type == "function_call"]
 
     def continue_after_tools(
-        self, interaction: Any, tool_results: list[tuple[Any, dict[str, Any]]], image_b64: str
+        self,
+        interaction: Any,
+        tool_results: list[tuple[Any, dict[str, Any]]],
+        scene_b64: str,
+        wrist_b64: str,
     ) -> Any:
         inputs = []
         for index, (call, result) in enumerate(tool_results):
@@ -82,7 +89,14 @@ class GeminiRoboticsProvider:
                 {"type": "text", "text": json.dumps(result, ensure_ascii=False)}
             ]
             if index == len(tool_results) - 1:
-                result_parts.append({"type": "image", "data": image_b64, "mime_type": "image/png"})
+                result_parts.extend(
+                    [
+                        {"type": "text", "text": "Updated fixed global scene camera:"},
+                        {"type": "image", "data": scene_b64, "mime_type": "image/png"},
+                        {"type": "text", "text": "Updated Panda wrist camera:"},
+                        {"type": "image", "data": wrist_b64, "mime_type": "image/png"},
+                    ]
+                )
             inputs.append(
                 {
                     "type": "function_result",
@@ -99,4 +113,3 @@ class GeminiRoboticsProvider:
             input=inputs,
             generation_config={"thinking_level": "low"},
         )
-

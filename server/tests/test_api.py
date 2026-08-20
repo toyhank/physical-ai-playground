@@ -16,6 +16,8 @@ def test_health_and_session_lifecycle() -> None:
         state = client.get(f"/api/sessions/{session_id}")
         assert state.status_code == 200
         assert state.json()["state"]["verified"] is False
-        camera = client.get(f"/api/sessions/{session_id}/camera.png")
-        assert camera.status_code == 200
-        assert camera.headers["content-type"] == "image/png"
+        for view in ("scene", "wrist"):
+            camera = client.get(f"/api/sessions/{session_id}/camera.png?view={view}")
+            assert camera.status_code == 200
+            assert camera.headers["content-type"] == "image/png"
+        assert client.get(f"/api/sessions/{session_id}/camera.png?view=unknown").status_code == 422

@@ -15,9 +15,7 @@ def test_mock_agent_is_language_agnostic() -> None:
     chinese = provider.plan("把红色方块放进蓝色盒子", engine)
     english = provider.plan("Put the red cube into the blue box.", engine)
     assert chinese == english
-    assert [action["name"] for action in chinese] == [
-        "set_gripper_state", "move", "move", "set_gripper_state", "move", "move", "move", "set_gripper_state", "move"
-    ]
+    assert [action["name"] for action in chinese] == ["pick_object", "place_object"]
 
 
 def test_mock_agent_end_to_end_is_verified_by_simulator() -> None:
@@ -30,7 +28,7 @@ def test_mock_agent_end_to_end_is_verified_by_simulator() -> None:
         while not queue.empty():
             events.append(queue.get_nowait())
         assert session.engine.verify_task()
-        assert len([event for event in events if event["type"] == "tool"]) == 9
+        assert len([event for event in events if event["type"] == "tool"]) == 2
         assert any(event["type"] == "success" and event["verified"] for event in events)
 
     asyncio.run(scenario())

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import time
 from collections import defaultdict, deque
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -75,10 +76,12 @@ def session_state(session_id: str) -> dict:
 
 
 @app.get("/api/sessions/{session_id}/camera.png")
-def session_camera(session_id: str) -> Response:
+def session_camera(session_id: str, view: Literal["scene", "wrist"] = "scene") -> Response:
     session = get_session(session_id)
     return Response(
-        content=base64.b64decode(session.engine.camera_png_base64(latch_observation=False)),
+        content=base64.b64decode(
+            session.engine.camera_png_base64(camera=view, latch_observation=False)
+        ),
         media_type="image/png",
         headers={"Cache-Control": "no-store"},
     )

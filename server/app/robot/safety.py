@@ -34,3 +34,14 @@ class SafetyValidator:
         if not isinstance(opened, bool):
             return SafetyResult(False, "OPENED_MUST_BE_BOOLEAN")
         return SafetyResult(True)
+
+    def validate_semantic_skill(
+        self, value: object, allowed: set[str], step: int, stopped: bool = False
+    ) -> SafetyResult:
+        if stopped:
+            return SafetyResult(False, "SESSION_STOPPED")
+        if step >= self.max_steps:
+            return SafetyResult(False, "MAX_AGENT_STEPS")
+        if not isinstance(value, str) or value not in allowed:
+            return SafetyResult(False, "UNKNOWN_SCENE_OBJECT")
+        return SafetyResult(True)
