@@ -1,6 +1,7 @@
 "use client";
 
 import { Canvas, useLoader, useThree } from "@react-three/fiber";
+import { OrbitControls } from "@react-three/drei";
 import { useLayoutEffect, useMemo } from "react";
 import * as THREE from "three";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
@@ -151,6 +152,18 @@ function Workcell({ sceneState }: Props) {
   const bodies = sceneState?.robot.bodies?.length ? sceneState.robot.bodies : HOME_BODIES;
   return <>
     <MuJoCoCamera />
+    <OrbitControls
+      makeDefault
+      target={[0, 0.44, -0.05]}
+      enableDamping
+      dampingFactor={0.08}
+      minDistance={0.45}
+      maxDistance={4}
+      minPolarAngle={0.08}
+      maxPolarAngle={Math.PI * 0.94}
+      screenSpacePanning
+      zoomToCursor
+    />
     <color attach="background" args={["#ccd6cc"]} />
     <ambientLight intensity={0.72} />
     <directionalLight position={[0, 2.4, 0.4]} intensity={2.2} castShadow shadow-mapSize={[1024, 1024]} />
@@ -169,7 +182,7 @@ function Workcell({ sceneState }: Props) {
 }
 
 export default function RobotScene3D(props: Props) {
-  return <div className="robotCanvas" aria-label="Franka Panda synchronized with MuJoCo">
+  return <div className="robotCanvas" aria-label="Interactive Franka Panda view: drag to rotate, scroll to zoom, and right-drag to pan">
     <div className="mujocoViewport">
       <Canvas shadows dpr={[1, 1.75]} camera={{ position: [0, 1.35, 1.15], fov: 49, near: 0.1, far: 20 }}>
         <Workcell {...props} />
