@@ -13,7 +13,8 @@ type Props = { sceneState:SceneState|null; running:boolean };
 type PandaPart={file:string;color:string};
 type SO101Part={file:string;color:string;pos:[number,number,number];quat:[number,number,number,number]};
 const WHITE="#fff",OFF_WHITE="#e6ebed",BLACK="#292d30",BLUE="#0a8ac7",GREEN="#00c853",YELLOW="#f5c327";
-const PANDA_ROOT="/models/franka_panda/assets",SO101_ROOT="/models/so101/assets";
+const API_URL=process.env.NEXT_PUBLIC_API_URL??"http://127.0.0.1:8000";
+const PANDA_ROOT="/models/franka_panda/assets",SO101_ROOT=`${API_URL}/models/so101/assets`;
 
 const PANDA_MESHES:Record<string,PandaPart[]>={
   link0:[["link0_0.obj",OFF_WHITE],["link0_1.obj",BLACK],["link0_2.obj",OFF_WHITE],["link0_3.obj",BLACK],["link0_4.obj",OFF_WHITE],["link0_5.obj",BLACK],["link0_7.obj",WHITE],["link0_8.obj",WHITE],["link0_9.obj",BLACK],["link0_10.obj",OFF_WHITE],["link0_11.obj",WHITE]].map(([file,color])=>({file,color})),

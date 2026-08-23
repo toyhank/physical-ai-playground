@@ -4,10 +4,12 @@ import asyncio
 import base64
 import time
 from collections import defaultdict, deque
+from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
 from app.agent.orchestrator import AgentOrchestrator
@@ -22,6 +24,11 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+app.mount(
+    "/models",
+    StaticFiles(directory=Path(__file__).resolve().parents[2] / "public" / "models"),
+    name="models",
 )
 manager = SessionManager(settings.max_sessions, settings.session_idle_seconds)
 orchestrator = AgentOrchestrator(settings)
