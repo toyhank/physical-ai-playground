@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -44,6 +45,8 @@ class SimulationSession:
         self.grasp_mode = grasp_mode
         self.tools = RobotTools(self.backend)
         self.subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
+        self.events: deque[dict[str, Any]] = deque(maxlen=512)
+        self.event_sequence = 0
         self.running_task: asyncio.Task[None] | None = None
         self.last_active = datetime.now(UTC)
 
@@ -52,8 +55,11 @@ class SimulationSession:
 
     async def publish(self, payload: dict[str, Any]) -> None:
         self.touch()
+        self.event_sequence += 1
+        event = {**payload, "sequence": self.event_sequence}
+        self.events.append(event)
         for queue in tuple(self.subscribers):
-            await queue.put(payload)
+            await queue.put(event)
 
     def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)

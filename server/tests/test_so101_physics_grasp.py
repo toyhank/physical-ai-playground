@@ -21,3 +21,25 @@ def test_cube_falls_under_gravity() -> None:
         backend._mujoco.mj_step(backend.model, backend.data)
     assert float(backend.data.qpos[address + 2]) < initial
     backend.stop()
+
+
+def test_vla_verification_requires_cube_fully_inside_stable_and_released() -> None:
+    backend = SO101MujocoBackend(seed=0, vla_aligned=True)
+    center = backend._box_position.copy()
+    center[2] += backend.cube_half_size
+    backend._write_cube_pose("red_cube", center)
+    backend.data.qpos[backend._joint_qpos["gripper"]] = 1.0
+    backend._mujoco.mj_forward(backend.model, backend.data)
+    assert backend.verify_task()
+
+    partly_over_wall = center.copy()
+    partly_over_wall[0] += 0.03
+    backend._write_cube_pose("red_cube", partly_over_wall)
+    backend._mujoco.mj_forward(backend.model, backend.data)
+    assert not backend.verify_task()
+
+    backend._write_cube_pose("red_cube", center)
+    backend.data.qpos[backend._joint_qpos["gripper"]] = 0.0
+    backend._mujoco.mj_forward(backend.model, backend.data)
+    assert not backend.verify_task()
+    backend.stop()

@@ -30,6 +30,13 @@ app.mount(
     StaticFiles(directory=Path(__file__).resolve().parents[2] / "public" / "models"),
     name="models",
 )
+app.mount(
+    "/simulation-models",
+    StaticFiles(
+        directory=Path(__file__).resolve().parent / "simulation" / "models"
+    ),
+    name="simulation-models",
+)
 manager = SessionManager(settings.max_sessions, settings.session_idle_seconds)
 orchestrator = AgentOrchestrator(settings)
 rate_limits: dict[str, deque[float]] = defaultdict(deque)
@@ -128,6 +135,18 @@ def create_session(payload: CreateSessionRequest) -> dict:
 def session_state(session_id: str) -> dict:
     session = get_session(session_id)
     return {"session_id": session.id, "state": session.backend.get_state()}
+
+
+@app.get("/api/sessions/{session_id}/events")
+def session_events(session_id: str, after: int = 0) -> dict:
+    session = get_session(session_id)
+    return {
+        "events": [
+            event for event in session.events if event["sequence"] > after
+        ],
+        "cursor": session.event_sequence,
+        "running": bool(session.running_task and not session.running_task.done()),
+    }
 
 
 @app.delete("/api/sessions/{session_id}", status_code=204)

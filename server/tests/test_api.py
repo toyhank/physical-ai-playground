@@ -38,6 +38,12 @@ def test_health_and_session_lifecycle() -> None:
             assert camera.status_code == 200
             assert camera.headers["content-type"] == "image/png"
         assert client.get(f"/api/sessions/{session_id}/camera.png?view=unknown").status_code == 422
+        reset = client.post(f"/api/sessions/{session_id}/reset", json={})
+        assert reset.status_code == 200
+        events = client.get(f"/api/sessions/{session_id}/events?after=0")
+        assert events.status_code == 200
+        assert events.json()["events"][0]["type"] == "scene_state"
+        assert events.json()["cursor"] == 1
         assert client.post(
             "/api/sessions", json={"policy": "C:/arbitrary/checkpoint"}
         ).status_code == 422

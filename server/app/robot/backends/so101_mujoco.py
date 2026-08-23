@@ -700,9 +700,17 @@ class SO101MujocoBackend(RobotBackend):
         target = self.data.xpos[self._cube_body_ids[self.task_object_id]]
         box = self._box_position if self.vla_aligned else self.data.mocap_pos[0]
         delta = np.abs(target[:2] - box[:2])
+        center_limit = self.box_half_extents - self.cube_half_size - 0.001
+        floor_top = float(box[2]) + (0.0 if self.vla_aligned else 0.006)
+        expected_height = floor_top + self.cube_half_size
+        dof = self._cube_dof_addresses[self.task_object_id]
+        linear_speed = float(np.linalg.norm(self.data.qvel[dof : dof + 3]))
+        gripper_open = bool(self.joint_positions[-1] > 0.7)
         return bool(
-            np.all(delta <= self.box_half_extents)
-            and 0.0 <= target[2] <= 0.09
+            np.all(delta <= center_limit)
+            and abs(float(target[2]) - expected_height) <= 0.008
+            and linear_speed <= 0.05
+            and gripper_open
             and self._attached_object is None
         )
 
