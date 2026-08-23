@@ -37,7 +37,7 @@ function Choice<T extends string>({value,current,label,onClick}:{value:T;current
 
 export default function Home(){
  const[prompt,setPrompt]=useState("把红色方块放进蓝色盒子"),[running,setRunning]=useState(false),[online,setOnline]=useState(false),[mode,setMode]=useState<"connecting"|"backend"|"browser">("connecting");
- const[robot,setRobot]=useState<RobotId>("so101"),[controller,setController]=useState<ControllerMode>("vla"),[grasp,setGrasp]=useState<GraspMode>("physics");
+ const[robot,setRobot]=useState<RobotId>("so101"),[controller,setController]=useState<ControllerMode>(PUBLIC_DEMO?"hybrid":"vla"),[grasp,setGrasp]=useState<GraspMode>("physics");
  const[provider,setProvider]=useState("mock"),[sessionId,setSessionId]=useState<string|null>(null),[sceneState,setSceneState]=useState<SceneState|null>(null),[trace,setTrace]=useState<TraceEvent[]>(initialTrace),[cameraVersion,setCameraVersion]=useState(0);
  const[vla,setVla]=useState<VLADebug>({queue:0,latency:0,raw:[],safe:[],events:[]});const socketRef=useRef<WebSocket|null>(null);
  useEffect(()=>{let cancelled=false,createdId:string|undefined;setOnline(false);setMode("connecting");setRunning(false);socketRef.current?.close();
