@@ -1,0 +1,14 @@
+{
+  "episodes": 100,
+  "seed": 0,
+  "grasp_mode": "physics",
+  "successes": 11,
+  "success_rate": 0.11,
+  "grasp_failure": 12,
+  "ik_failure": 15,
+  "slip_or_drop": 0,
+  "place_failure": 62,
+  "mean_physics_steps": 2413.84,
+  "mean_episode_seconds": 0.40462652900012475,
+  "attachment_or_teleport_used": false
+}

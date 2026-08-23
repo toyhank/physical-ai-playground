@@ -40,7 +40,13 @@ yarn-error.log*
 /outputs/
 /work/
 /.npm-cache*/
+/.cache/
+/models/
+/vla-service-*.log
+/backend.*.log
+/tunnel.*.log
 server/.venv/
+.venv-vla/
 **/__pycache__/
 *.pyc
 /server/data/runs/

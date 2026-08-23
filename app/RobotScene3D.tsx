@@ -2,198 +2,59 @@
 
 import { Canvas, useLoader, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { useLayoutEffect, useMemo } from "react";
+import { ComponentType, useLayoutEffect, useMemo } from "react";
 import * as THREE from "three";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
+import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 
 type RobotBody = { name: string; matrix: number[] };
-type SceneState = {
-  robot: { joints: number[]; finger_joints?: number[]; bodies?: RobotBody[]; gripper_open: boolean };
-  objects: { name: string; position: number[] }[];
-  grasped: boolean;
-  verified: boolean;
+type SceneState = { robot_id?: "panda"|"so101"; scene_profile?: "playground"|"vla_reference"; robot:{joints:number[];finger_joints?:number[];bodies?:RobotBody[];gripper_open:boolean}; objects:{name:string;position:number[]}[];verified:boolean };
+type Props = { sceneState:SceneState|null; running:boolean };
+type PandaPart={file:string;color:string};
+type SO101Part={file:string;color:string;pos:[number,number,number];quat:[number,number,number,number]};
+const WHITE="#fff",OFF_WHITE="#e6ebed",BLACK="#292d30",BLUE="#0a8ac7",GREEN="#00c853",YELLOW="#f5c327";
+const PANDA_ROOT="/models/franka_panda/assets",SO101_ROOT="/models/so101/assets";
+
+const PANDA_MESHES:Record<string,PandaPart[]>={
+  link0:[["link0_0.obj",OFF_WHITE],["link0_1.obj",BLACK],["link0_2.obj",OFF_WHITE],["link0_3.obj",BLACK],["link0_4.obj",OFF_WHITE],["link0_5.obj",BLACK],["link0_7.obj",WHITE],["link0_8.obj",WHITE],["link0_9.obj",BLACK],["link0_10.obj",OFF_WHITE],["link0_11.obj",WHITE]].map(([file,color])=>({file,color})),
+  link1:[{file:"link1.obj",color:WHITE}],link2:[{file:"link2.obj",color:WHITE}],
+  link3:[["link3_0.obj",WHITE],["link3_1.obj",WHITE],["link3_2.obj",WHITE],["link3_3.obj",BLACK]].map(([file,color])=>({file,color})),
+  link4:[["link4_0.obj",WHITE],["link4_1.obj",WHITE],["link4_2.obj",BLACK],["link4_3.obj",WHITE]].map(([file,color])=>({file,color})),
+  link5:[["link5_0.obj",BLACK],["link5_1.obj",WHITE],["link5_2.obj",WHITE]].map(([file,color])=>({file,color})),
+  link6:[["link6_0.obj",OFF_WHITE],["link6_1.obj",WHITE],["link6_2.obj",BLACK],["link6_3.obj",WHITE],["link6_4.obj",WHITE],["link6_5.obj",WHITE],["link6_6.obj",WHITE],["link6_7.obj",BLUE],["link6_8.obj",BLUE],["link6_9.obj",BLACK],["link6_10.obj",BLACK],["link6_11.obj",WHITE],["link6_12.obj",GREEN],["link6_13.obj",WHITE],["link6_14.obj",BLACK],["link6_15.obj",BLACK],["link6_16.obj",WHITE]].map(([file,color])=>({file,color})),
+  link7:[["link7_0.obj",WHITE],["link7_1.obj",BLACK],["link7_2.obj",BLACK],["link7_3.obj",BLACK],["link7_4.obj",BLACK],["link7_5.obj",BLACK],["link7_6.obj",BLACK],["link7_7.obj",WHITE]].map(([file,color])=>({file,color})),
+  hand:[["hand_0.obj",OFF_WHITE],["hand_1.obj",BLACK],["hand_2.obj",BLACK],["hand_3.obj",WHITE],["hand_4.obj",OFF_WHITE]].map(([file,color])=>({file,color})),
+  left_finger:[["finger_0.obj",OFF_WHITE],["finger_1.obj",BLACK]].map(([file,color])=>({file,color})),right_finger:[["finger_0.obj",OFF_WHITE],["finger_1.obj",BLACK]].map(([file,color])=>({file,color})),
 };
-type Props = { sceneState: SceneState | null; running: boolean };
-type MeshPart = { file: string; color: string };
-
-const WHITE = "#ffffff";
-const OFF_WHITE = "#e6ebed";
-const BLACK = "#404040";
-const LIGHT_BLUE = "#0a8ac7";
-const GREEN = "#00c853";
-const ASSET_ROOT = "/models/franka_panda/assets";
-
-const ROBOT_MESHES: Record<string, MeshPart[]> = {
-  link0: [
-    ["link0_0.obj", OFF_WHITE], ["link0_1.obj", BLACK], ["link0_2.obj", OFF_WHITE],
-    ["link0_3.obj", BLACK], ["link0_4.obj", OFF_WHITE], ["link0_5.obj", BLACK],
-    ["link0_7.obj", WHITE], ["link0_8.obj", WHITE], ["link0_9.obj", BLACK],
-    ["link0_10.obj", OFF_WHITE], ["link0_11.obj", WHITE],
-  ].map(([file, color]) => ({ file, color })),
-  link1: [{ file: "link1.obj", color: WHITE }],
-  link2: [{ file: "link2.obj", color: WHITE }],
-  link3: [
-    { file: "link3_0.obj", color: WHITE }, { file: "link3_1.obj", color: WHITE },
-    { file: "link3_2.obj", color: WHITE }, { file: "link3_3.obj", color: BLACK },
-  ],
-  link4: [
-    { file: "link4_0.obj", color: WHITE }, { file: "link4_1.obj", color: WHITE },
-    { file: "link4_2.obj", color: BLACK }, { file: "link4_3.obj", color: WHITE },
-  ],
-  link5: [
-    { file: "link5_0.obj", color: BLACK }, { file: "link5_1.obj", color: WHITE },
-    { file: "link5_2.obj", color: WHITE },
-  ],
-  link6: [
-    ["link6_0.obj", OFF_WHITE], ["link6_1.obj", WHITE], ["link6_2.obj", BLACK],
-    ["link6_3.obj", WHITE], ["link6_4.obj", WHITE], ["link6_5.obj", WHITE],
-    ["link6_6.obj", WHITE], ["link6_7.obj", LIGHT_BLUE], ["link6_8.obj", LIGHT_BLUE],
-    ["link6_9.obj", BLACK], ["link6_10.obj", BLACK], ["link6_11.obj", WHITE],
-    ["link6_12.obj", GREEN], ["link6_13.obj", WHITE], ["link6_14.obj", BLACK],
-    ["link6_15.obj", BLACK], ["link6_16.obj", WHITE],
-  ].map(([file, color]) => ({ file, color })),
-  link7: [
-    ["link7_0.obj", WHITE], ["link7_1.obj", BLACK], ["link7_2.obj", BLACK],
-    ["link7_3.obj", BLACK], ["link7_4.obj", BLACK], ["link7_5.obj", BLACK],
-    ["link7_6.obj", BLACK], ["link7_7.obj", WHITE],
-  ].map(([file, color]) => ({ file, color })),
-  hand: [
-    { file: "hand_0.obj", color: OFF_WHITE }, { file: "hand_1.obj", color: BLACK },
-    { file: "hand_2.obj", color: BLACK }, { file: "hand_3.obj", color: WHITE },
-    { file: "hand_4.obj", color: OFF_WHITE },
-  ],
-  left_finger: [
-    { file: "finger_0.obj", color: OFF_WHITE }, { file: "finger_1.obj", color: BLACK },
-  ],
-  right_finger: [
-    { file: "finger_0.obj", color: OFF_WHITE }, { file: "finger_1.obj", color: BLACK },
-  ],
+const so=(file:string,color:string,pos:[number,number,number],quat:[number,number,number,number]):SO101Part=>({file,color,pos,quat});
+const SO101_MESHES:Record<string,SO101Part[]>={
+  base:[so("base_motor_holder_so101_v1.stl",YELLOW,[-.00636471,-.00009944,-.0024],[.5,.5,.5,.5]),so("base_so101_v2.stl",YELLOW,[-.00636471,0,-.0024],[.5,.5,.5,.5]),so("sts3215_03a_v1.stl",BLACK,[.0263353,0,.0437],[1,0,0,0]),so("waveshare_mounting_plate_so101_v2.stl",YELLOW,[-.0309827,-.000199,.0474],[.5,.5,.5,.5])],
+  shoulder:[so("sts3215_03a_v1.stl",BLACK,[-.0303992,.000422,-.0417],[.5,.5,.5,-.5]),so("motor_holder_so101_base_v1.stl",YELLOW,[-.0675992,-.000178,.01585],[.5,.5,-.5,.5]),so("rotation_pitch_so101_v1.stl",YELLOW,[.0122008,.000022,.0464],[.707107,-.707107,0,0])],
+  upper_arm:[so("sts3215_03a_v1.stl",BLACK,[-.11257,-.0155,.0187],[0,-.707107,.707107,0]),so("upper_arm_so101_v1.stl",YELLOW,[-.065085,.012,.0182],[0,1,0,0])],
+  lower_arm:[so("under_arm_so101_v1.stl",YELLOW,[-.06485,-.032,.0182],[0,1,0,0]),so("motor_holder_so101_wrist_v1.stl",YELLOW,[-.06485,-.032,.018],[0,-1,0,0]),so("sts3215_03a_v1.stl",BLACK,[-.1224,.0052,.0187],[0,0,1,0])],
+  wrist:[so("sts3215_03a_no_horn_v1.stl",BLACK,[0,-.0424,.0306],[.5,.5,.5,-.5]),so("wrist_roll_pitch_so101_v2.stl",YELLOW,[0,-.028,.0181],[.5,-.5,-.5,-.5])],
+  gripper:[so("sts3215_03a_v1.stl",BLACK,[.0077,.0001,-.0234],[.707107,-.707107,0,0]),so("wrist_roll_follower_so101_v1.stl",YELLOW,[0,-.000218,.00095],[0,1,0,0])],
+  moving_jaw_so101_v1:[so("moving_jaw_so101_v1.stl",YELLOW,[0,0,.0189],[1,0,0,0])],
 };
-
-const HOME_BODIES: RobotBody[] = [
-  {name:"link0",matrix:[1,0,0,0,0,1,0,.44,0,0,1,.37,0,0,0,1]},
-  {name:"link1",matrix:[1,0,0,0,0,1,0,.773,0,0,1,.37,0,0,0,1]},
-  {name:"link2",matrix:[.7073883,0,-.7068252,0,.7068252,0,.7073883,.773,0,-1,0,.37,0,0,0,1]},
-  {name:"link3",matrix:[.7073883,-.7068252,0,-.2233568,.7068252,.7073883,0,.9965347,0,0,1,.37,0,0,0,1]},
-  {name:"link4",matrix:[-.0002037,0,-1,-.1649972,-1,0,.0002037,1.0548478,0,1,0,.37,0,0,0,1]},
-  {name:"link5",matrix:[-.0002037,1,0,.2190196,-1,-.0002037,0,1.1372696,0,0,1,.37,0,0,0,1]},
-  {name:"link6",matrix:[1,0,0,.2190196,0,0,-1,1.1372696,0,1,0,.37,0,0,0,1]},
-  {name:"link7",matrix:[.7073883,0,.7068252,.3070196,0,-1,0,1.1372696,.7068252,0,-.7073883,.37,0,0,0,1]},
-  {name:"hand",matrix:[.9999999,0,-.0003981,.3070196,0,-1,0,1.0302696,-.0003981,0,-.9999999,.37,0,0,0,1]},
-  {name:"left_finger",matrix:[.9999999,0,-.0003981,.3070355,0,-1,0,.9718696,-.0003981,0,-.9999999,.41,0,0,0,1]},
-  {name:"right_finger",matrix:[-.9999999,0,.0003981,.3070036,0,-1,0,.9718696,.0003981,0,.9999999,.33,0,0,0,1]},
+const HOME_BODIES:RobotBody[]=[
+ {name:"link0",matrix:[1,0,0,0,0,1,0,.44,0,0,1,.37,0,0,0,1]},{name:"link1",matrix:[1,0,0,0,0,1,0,.773,0,0,1,.37,0,0,0,1]},
+ {name:"link2",matrix:[.707,0,-.707,0,.707,0,.707,.773,0,-1,0,.37,0,0,0,1]},{name:"link3",matrix:[.707,-.707,0,-.223,.707,.707,0,.997,0,0,1,.37,0,0,0,1]},
+ {name:"link4",matrix:[0,0,-1,-.165,-1,0,0,1.055,0,1,0,.37,0,0,0,1]},{name:"link5",matrix:[0,1,0,.219,-1,0,0,1.137,0,0,1,.37,0,0,0,1]},
+ {name:"link6",matrix:[1,0,0,.219,0,0,-1,1.137,0,1,0,.37,0,0,0,1]},{name:"link7",matrix:[.707,0,.707,.307,0,-1,0,1.137,.707,0,-.707,.37,0,0,0,1]},
+ {name:"hand",matrix:[1,0,0,.307,0,-1,0,1.03,0,0,-1,.37,0,0,0,1]},{name:"left_finger",matrix:[1,0,0,.307,0,-1,0,.972,0,0,-1,.41,0,0,0,1]},{name:"right_finger",matrix:[-1,0,0,.307,0,-1,0,.972,0,0,1,.33,0,0,0,1]},
 ];
-
-function toThree(position: number[]): [number, number, number] {
-  return [position[0] ?? 0, position[2] ?? 0, -(position[1] ?? 0)];
-}
-
-function MuJoCoCamera() {
-  const { camera } = useThree();
-  useLayoutEffect(() => {
-    const perspective = camera as THREE.PerspectiveCamera;
-    perspective.position.set(0, 1.35, 1.15);
-    perspective.up.set(0, 0.796, -0.605);
-    perspective.fov = 49;
-    perspective.near = 0.1;
-    perspective.far = 20;
-    perspective.lookAt(0, 0.44, -0.05);
-    perspective.updateProjectionMatrix();
-  }, [camera]);
-  return null;
-}
-
-function PandaMeshPart({ part }: { part: MeshPart }) {
-  const source = useLoader(OBJLoader, `${ASSET_ROOT}/${part.file}`);
-  const object = useMemo(() => {
-    const clone = source.clone(true);
-    clone.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.material = new THREE.MeshStandardMaterial({ color: part.color, roughness: 0.36, metalness: 0.12 });
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
-    });
-    return clone;
-  }, [source, part.color]);
-  return <primitive object={object} />;
-}
-
-function PandaBody({ body }: { body: RobotBody }) {
-  const matrix = useMemo(() => new THREE.Matrix4().set(...body.matrix as [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number]), [body.matrix]);
-  return <group matrix={matrix} matrixAutoUpdate={false}>
-    <group rotation={[-Math.PI / 2, 0, 0]}>
-      {(ROBOT_MESHES[body.name] ?? []).map((part) => <PandaMeshPart key={`${body.name}-${part.file}`} part={part} />)}
-    </group>
-  </group>;
-}
-
-const CUBE_COLORS: Record<string, string> = {
-  red_cube: "#e01a14",
-  green_cube: "#16a34a",
-  yellow_cube: "#e9a20b",
-  purple_cube: "#8b35c8",
-};
-
-function ColoredCube({ name, position }: { name: string; position: [number, number, number] }) {
-  return <mesh position={position} castShadow receiveShadow>
-    <boxGeometry args={[0.06, 0.06, 0.06]} />
-    <meshStandardMaterial color={CUBE_COLORS[name] ?? "#777"} roughness={0.42} />
-  </mesh>;
-}
-
-function BlueBox({ position }: { position: [number, number, number] }) {
-  return <group position={position}>
-    <mesh castShadow receiveShadow><boxGeometry args={[0.24, 0.024, 0.2]} /><meshStandardMaterial color="#0f43df" roughness={0.4} /></mesh>
-    <mesh position={[0.11, 0.055, 0]} castShadow><boxGeometry args={[0.02, 0.11, 0.2]} /><meshStandardMaterial color="#0f43df" roughness={0.4} /></mesh>
-    <mesh position={[-0.11, 0.055, 0]} castShadow><boxGeometry args={[0.02, 0.11, 0.2]} /><meshStandardMaterial color="#0f43df" roughness={0.4} /></mesh>
-    <mesh position={[0, 0.055, -0.09]} castShadow><boxGeometry args={[0.2, 0.11, 0.02]} /><meshStandardMaterial color="#0f43df" roughness={0.4} /></mesh>
-    <mesh position={[0, 0.055, 0.09]} castShadow><boxGeometry args={[0.2, 0.11, 0.02]} /><meshStandardMaterial color="#0f43df" roughness={0.4} /></mesh>
-  </group>;
-}
-
-function Workcell({ sceneState }: Props) {
-  const objects = Object.fromEntries((sceneState?.objects ?? []).map((item) => [item.name, item.position]));
-  const cubeNames = Object.keys(objects).filter((name) => name.endsWith("_cube"));
-  const boxPosition = toThree(objects.blue_box ?? [0.22, 0.12, 0.452]);
-  const bodies = sceneState?.robot.bodies?.length ? sceneState.robot.bodies : HOME_BODIES;
-  return <>
-    <MuJoCoCamera />
-    <OrbitControls
-      makeDefault
-      target={[0, 0.44, -0.05]}
-      enableDamping
-      dampingFactor={0.08}
-      minDistance={0.45}
-      maxDistance={4}
-      minPolarAngle={0.08}
-      maxPolarAngle={Math.PI * 0.94}
-      screenSpacePanning
-      zoomToCursor
-    />
-    <color attach="background" args={["#ccd6cc"]} />
-    <ambientLight intensity={0.72} />
-    <directionalLight position={[0, 2.4, 0.4]} intensity={2.2} castShadow shadow-mapSize={[1024, 1024]} />
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.001, 0]} receiveShadow>
-      <planeGeometry args={[6, 6]} />
-      <meshStandardMaterial color="#ccd6cc" roughness={0.95} />
-    </mesh>
-    <mesh position={[0, 0.4, 0]} castShadow receiveShadow>
-      <boxGeometry args={[1.16, 0.08, 0.92]} />
-      <meshStandardMaterial color="#b89e7a" roughness={0.7} />
-    </mesh>
-    {bodies.map((body) => <PandaBody body={body} key={body.name} />)}
-    {cubeNames.map((name) => <ColoredCube name={name} position={toThree(objects[name])} key={name} />)}
-    <BlueBox position={boxPosition} />
-  </>;
-}
-
-export default function RobotScene3D(props: Props) {
-  return <div className="robotCanvas" aria-label="Interactive Franka Panda view: drag to rotate, scroll to zoom, and right-drag to pan">
-    <div className="mujocoViewport">
-      <Canvas shadows dpr={[1, 1.75]} camera={{ position: [0, 1.35, 1.15], fov: 49, near: 0.1, far: 20 }}>
-        <Workcell {...props} />
-      </Canvas>
-    </div>
-  </div>;
-}
+function matrixFrom(v:number[]){return new THREE.Matrix4().set(...v as [number,number,number,number,number,number,number,number,number,number,number,number,number,number,number,number]);}
+function toThree(p:number[]):[number,number,number]{return[p[0]??0,p[2]??0,-(p[1]??0)]}
+function localMatrix(part:SO101Part){const[w,x,y,z]=part.quat;const r=new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion(x,y,z,w));const c=new THREE.Matrix4().makeRotationX(-Math.PI/2),ci=new THREE.Matrix4().makeRotationX(Math.PI/2);return c.clone().multiply(r).multiply(ci).setPosition(...toThree(part.pos))}
+function WorkcellCamera({robotId}:{robotId:string}){const{camera}=useThree();useLayoutEffect(()=>{const c=camera as THREE.PerspectiveCamera;if(robotId==="so101"){c.position.set(.58,.48,.58);c.up.set(0,1,0);c.lookAt(.18,.06,0)}else{c.position.set(0,1.35,1.15);c.up.set(0,.796,-.605);c.lookAt(0,.44,-.05)}c.fov=49;c.updateProjectionMatrix()},[camera,robotId]);return null}
+function PandaMesh({part}:{part:PandaPart}){const src=useLoader(OBJLoader,`${PANDA_ROOT}/${part.file}`);const object=useMemo(()=>{const clone=src.clone(true);clone.traverse(child=>{if(child instanceof THREE.Mesh){child.material=new THREE.MeshStandardMaterial({color:part.color,roughness:.36,metalness:.12});child.castShadow=true;child.receiveShadow=true}});return clone},[src,part.color]);return <primitive object={object}/>}
+function PandaBody({body}:{body:RobotBody}){const matrix=useMemo(()=>matrixFrom(body.matrix),[body.matrix]);return <group matrix={matrix} matrixAutoUpdate={false}><group rotation={[-Math.PI/2,0,0]}>{(PANDA_MESHES[body.name]??[]).map(p=><PandaMesh key={p.file} part={p}/>)}</group></group>}
+function SO101Mesh({part}:{part:SO101Part}){const geometry=useLoader(STLLoader,`${SO101_ROOT}/${part.file}`);const local=useMemo(()=>localMatrix(part),[part]);return <group matrix={local} matrixAutoUpdate={false}><mesh geometry={geometry} rotation={[-Math.PI/2,0,0]} castShadow receiveShadow><meshStandardMaterial color={part.color} roughness={.48} metalness={.05}/></mesh></group>}
+function SO101Body({body}:{body:RobotBody}){const matrix=useMemo(()=>matrixFrom(body.matrix),[body.matrix]);return <group matrix={matrix} matrixAutoUpdate={false}>{(SO101_MESHES[body.name]??[]).map((p,i)=><SO101Mesh key={`${p.file}-${i}`} part={p}/>)}</group>}
+const robotRenderers:Record<string,ComponentType<{body:RobotBody}>>={panda:PandaBody,so101:SO101Body};
+function RobotRenderer({robotId,bodies}:{robotId:string;bodies:RobotBody[]}){const Body=robotRenderers[robotId]??PandaBody;return <>{bodies.map(body=><Body body={body} key={body.name}/>)}</>}
+const COLORS:Record<string,string>={red_cube:"#e01a14",green_cube:"#16a34a",yellow_cube:"#e9a20b",purple_cube:"#8b35c8"};
+function Cube({name,position,size}:{name:string;position:[number,number,number];size:number}){return <mesh position={position} castShadow receiveShadow><boxGeometry args={[size,size,size]}/><meshStandardMaterial color={COLORS[name]??"#777"} roughness={.42}/></mesh>}
+function BlueBox({position,small,aligned}:{position:[number,number,number];small:boolean;aligned:boolean}){const width=aligned?.09:small?.14:.24,depth=aligned?.09:small?.12:.2,wall=aligned?.008:small?.012:.02,height=aligned?.024:small?.07:.11,wallY=aligned?.006:height/2;const walls=[[width/2-wall/2,wallY,0,wall,height,depth],[-width/2+wall/2,wallY,0,wall,height,depth],[0,wallY,depth/2-wall/2,width-2*wall,height,wall],[0,wallY,-depth/2+wall/2,width-2*wall,height,wall]];return <group position={position}><mesh castShadow receiveShadow><boxGeometry args={[width,aligned?.006:wall,depth]}/><meshStandardMaterial color="#0f43df"/></mesh>{walls.map((g,i)=><mesh key={i} position={[g[0],g[1],g[2]] as [number,number,number]} castShadow><boxGeometry args={[g[3],g[4],g[5]] as [number,number,number]}/><meshStandardMaterial color="#0f43df"/></mesh>)}</group>}
+function Workcell({sceneState}:Props){const robotId=sceneState?.robot_id??"panda",small=robotId==="so101",aligned=sceneState?.scene_profile==="vla_reference";const objects=Object.fromEntries((sceneState?.objects??[]).map(o=>[o.name,o.position]));const bodies=sceneState?.robot.bodies?.length?sceneState.robot.bodies:(small?[]:HOME_BODIES);const target=(small?[.2,.06,0]:[0,.44,-.05]) as [number,number,number];return <><WorkcellCamera robotId={robotId}/><OrbitControls makeDefault target={target} enableDamping dampingFactor={.08} minDistance={.28} maxDistance={4} screenSpacePanning zoomToCursor/><color attach="background" args={["#ccd6cc"]}/><ambientLight intensity={.72}/><directionalLight position={[.2,2.4,.4]} intensity={2.2} castShadow/><mesh rotation={[-Math.PI/2,0,0]} position={[0,small?-.081:-.001,0]} receiveShadow><planeGeometry args={[6,6]}/><meshStandardMaterial color="#ccd6cc" roughness={.95}/></mesh><mesh position={[small ? .2 : 0,small?-.04:.4,0]} castShadow receiveShadow><boxGeometry args={[small ? .96 : 1.16,.08,small ? .72 : .92]}/><meshStandardMaterial color="#b89e7a" roughness={.7}/></mesh><RobotRenderer robotId={robotId} bodies={bodies}/>{Object.keys(objects).filter(n=>n.endsWith("_cube")).map(name=><Cube key={name} name={name} position={toThree(objects[name])} size={aligned?.024:small?.036:.06}/>)}<BlueBox position={toThree(objects.blue_box??[.3,.12,.006])} small={small} aligned={aligned}/></>}
+export default function RobotScene3D(props:Props){const id=props.sceneState?.robot_id??"panda";return <div className="robotCanvas" aria-label={`Interactive ${id} MuJoCo view`}><div className="mujocoViewport"><Canvas shadows dpr={[1,1.75]} camera={{position:[.58,.48,.58],fov:49,near:.01,far:20}}><Workcell {...props}/></Canvas></div></div>}

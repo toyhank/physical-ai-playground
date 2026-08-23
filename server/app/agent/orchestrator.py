@@ -36,13 +36,161 @@ class AgentOrchestrator:
             await session.publish({"type": "failure", "error": str(error)})
 
     async def _run_provider(self, session: SimulationSession, prompt: str, logger: RunLogger) -> None:
-        if self.config.model_provider == "mock":
+        if session.controller == "hybrid":
+            await self._run_hybrid(session, prompt, logger)
+            return
+        if session.controller == "vla":
+            await self._run_vla(session, prompt, logger)
+            return
+        if session.brain == "none":
             await self._run_mock(session, prompt, logger)
             return
-        if self.config.model_provider == "gemini":
+        if session.brain == "gemini":
             await self._run_gemini(session, prompt, logger)
             return
-        raise RuntimeError(f"Unsupported MODEL_PROVIDER: {self.config.model_provider}")
+        raise RuntimeError(f"Unsupported brain: {session.brain}")
+
+    async def _run_vla(
+        self, session: SimulationSession, prompt: str, logger: RunLogger
+    ) -> None:
+        from app.robot.backends.so101_mujoco import SO101MujocoBackend
+        from app.vla.controller import VLAController
+        from app.vla.mock import MockVLAProvider
+        from app.vla.smolvla_client import SmolVLAClient
+
+        if not isinstance(session.backend, SO101MujocoBackend):
+            raise RuntimeError("VLA_REQUIRES_SO101")
+        if self.config.vla_provider == "mock":
+            provider = MockVLAProvider()
+        elif self.config.vla_provider == "smolvla":
+            provider = SmolVLAClient(self.config.vla_host)
+        else:
+            raise RuntimeError("UNKNOWN_VLA_PROVIDER")
+        controller = VLAController(session.backend, provider)
+        await session.publish(
+            {
+                "type": "vla_observation",
+                "features": [
+                    "observation.images.scene",
+                    "observation.images.wrist",
+                    "observation.state",
+                ],
+                "forbidden_features": ["object_xyz", "target_object_id", "ik_target"],
+            }
+        )
+        logger.event({"type": "vla", "provider": provider.name, "task": prompt})
+        for _ in range(self.config.vla_max_steps):
+            tick = await asyncio.to_thread(controller.tick, prompt)
+            event = {
+                "type": "vla_action",
+                "provider": provider.name,
+                "raw_action": tick.raw_action,
+                "safe_action": tick.safe_action,
+                "safety": tick.safety_events,
+                "action_queue": tick.queue_size,
+                "inference_latency_ms": round(controller.last_inference_ms, 3),
+            }
+            logger.event(event)
+            await session.publish(event)
+            for safety_event in tick.safety_events:
+                await session.publish({"type": "safety", "event": safety_event})
+            for frame in tick.result.frames or []:
+                await session.publish({"type": "scene_state", "state": frame})
+            if not tick.result.success:
+                await session.publish({"type": "failure", "error": tick.result.error})
+                logger.finish(False, tick.result.error)
+                return
+            if session.backend.verify_task():
+                break
+            await asyncio.sleep(1 / session.backend.policy_hz)
+        await self._finish(session, logger)
+
+    async def _execute_vla_subtask(
+        self,
+        session: SimulationSession,
+        instruction: str,
+        logger: RunLogger,
+    ) -> dict[str, Any]:
+        from app.robot.backends.so101_mujoco import SO101MujocoBackend
+        from app.vla.controller import VLAController
+        from app.vla.mock import MockVLAProvider
+        from app.vla.smolvla_client import SmolVLAClient
+
+        if not isinstance(session.backend, SO101MujocoBackend):
+            return {"success": False, "error": "VLA_REQUIRES_SO101"}
+        provider = (
+            MockVLAProvider()
+            if self.config.vla_provider == "mock"
+            else SmolVLAClient(self.config.vla_host)
+        )
+        controller = VLAController(session.backend, provider)
+        await session.publish(
+            {"type": "vla_subtask", "instruction": instruction, "provider": provider.name}
+        )
+        for _ in range(self.config.vla_max_steps):
+            tick = await asyncio.to_thread(controller.tick, instruction)
+            event = {
+                "type": "vla_action",
+                "provider": provider.name,
+                "raw_action": tick.raw_action,
+                "safe_action": tick.safe_action,
+                "safety": tick.safety_events,
+                "action_queue": tick.queue_size,
+                "inference_latency_ms": round(controller.last_inference_ms, 3),
+            }
+            logger.event(event)
+            await session.publish(event)
+            for frame in tick.result.frames or []:
+                await session.publish({"type": "scene_state", "state": frame})
+            if not tick.result.success:
+                return {"success": False, "error": tick.result.error}
+            if session.backend.verify_task():
+                return {"success": True, "verified": True}
+            await asyncio.sleep(1 / session.backend.policy_hz)
+        return {"success": False, "error": "VLA_SUBTASK_STEP_LIMIT"}
+
+    async def _run_hybrid(
+        self, session: SimulationSession, prompt: str, logger: RunLogger
+    ) -> None:
+        from app.models.gemini_robotics import GeminiRoboticsProvider
+
+        if session.brain != "gemini":
+            raise RuntimeError("HYBRID_REQUIRES_GEMINI_BRAIN")
+        provider = GeminiRoboticsProvider(model_id=self.config.model_id, hybrid=True)
+        scene_b64, wrist_b64 = await self._observe(session, logger, 0)
+        interaction = await asyncio.to_thread(provider.start, prompt, scene_b64, wrist_b64)
+        observation = 0
+        while observation < self.config.max_agent_steps:
+            calls = provider.calls(interaction)
+            if not calls:
+                break
+            results: list[tuple[Any, dict[str, Any]]] = []
+            for call in calls:
+                if call.name != "execute_vla_subtask":
+                    result = {"success": False, "error": "HYBRID_TOOL_NOT_ALLOWED"}
+                else:
+                    instruction = str(dict(call.arguments).get("instruction", "")).strip()
+                    if not instruction:
+                        result = {"success": False, "error": "EMPTY_VLA_SUBTASK"}
+                    else:
+                        result = await self._execute_vla_subtask(
+                            session, instruction, logger
+                        )
+                results.append((call, result))
+            observation += 1
+            scene_b64, wrist_b64 = await self._observe(
+                session, logger, observation
+            )
+            interaction = await asyncio.to_thread(
+                provider.continue_after_tools,
+                interaction,
+                results,
+                scene_b64,
+                wrist_b64,
+            )
+            if session.backend.verify_task():
+                break
+        await self._finish(session, logger)
 
     async def _observe(
         self,
@@ -53,13 +201,13 @@ class AgentOrchestrator:
         latch_projection: bool = True,
     ) -> tuple[str, str]:
         scene_b64 = await asyncio.to_thread(
-            session.engine.camera_png_base64,
-            camera="scene",
+            session.backend.render_camera,
+            "scene",
             latch_observation=latch_projection,
         )
         wrist_b64 = await asyncio.to_thread(
-            session.engine.camera_png_base64,
-            camera="wrist",
+            session.backend.render_camera,
+            "wrist",
             latch_observation=False,
         )
         logger.observation(index, base64.b64decode(scene_b64), "scene")
@@ -93,7 +241,7 @@ class AgentOrchestrator:
         return payload
 
     async def _finish(self, session: SimulationSession, logger: RunLogger) -> None:
-        verified = session.engine.verify_task()
+        verified = session.backend.verify_task()
         if verified:
             logger.finish(True)
             await session.publish(
@@ -112,14 +260,14 @@ class AgentOrchestrator:
     async def _run_mock(self, session: SimulationSession, prompt: str, logger: RunLogger) -> None:
         await self._observe(session, logger, 0)
         provider = MockRobotModel()
-        actions = provider.plan(prompt, session.engine)
+        actions = provider.plan(prompt, session.backend)
         await session.publish({"type": "model", "text": "Visual task plan ready", "model": provider.name})
         observation = 0
         for action in actions:
             result = await self._execute_action(
                 session, logger, action["name"], action["arguments"]
             )
-            if session.engine.verify_task():
+            if session.backend.verify_task():
                 break
             observation += 1
             # The mock planner creates one complete batch from observation 0.
@@ -156,7 +304,7 @@ class AgentOrchestrator:
                 results.append((call, result))
                 if session.tools.steps >= self.config.max_agent_steps:
                     break
-            if session.engine.verify_task():
+            if session.backend.verify_task():
                 break
             observation += 1
             scene_b64, wrist_b64 = await self._observe(session, logger, observation)

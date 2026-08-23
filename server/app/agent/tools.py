@@ -3,12 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 from app.robot.safety import SafetyValidator
-from app.simulation.mujoco_engine import CUBE_NAMES, MujocoEngine, ToolExecution
+from app.robot.base import RobotBackend
+from app.simulation.mujoco_engine import CUBE_NAMES, ToolExecution
 
 
 class RobotTools:
-    def __init__(self, engine: MujocoEngine, max_steps: int = 15) -> None:
-        self.engine = engine
+    def __init__(self, backend: RobotBackend, max_steps: int = 15) -> None:
+        self.backend = backend
         self.safety = SafetyValidator(max_steps=max_steps)
         self.steps = 0
         self.stopped = False
@@ -37,9 +38,9 @@ class RobotTools:
             return ToolExecution(False, validation.error)
         self.steps += 1
         if name == "move":
-            return self.engine.move(arguments["x"], arguments["y"], arguments["high"])
+            return self.backend.apply_action({"name": name, "arguments": arguments})
         if name == "set_gripper_state":
-            return self.engine.set_gripper_state(arguments["opened"])
+            return self.backend.apply_action({"name": name, "arguments": arguments})
         if name == "pick_object":
-            return self.engine.pick_object(arguments["object_id"])
-        return self.engine.place_object(arguments["container_id"])
+            return self.backend.apply_action({"name": name, "arguments": arguments})
+        return self.backend.apply_action({"name": name, "arguments": arguments})

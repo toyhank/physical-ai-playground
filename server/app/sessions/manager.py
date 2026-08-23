@@ -11,11 +11,11 @@ class SessionManager:
         self.idle_seconds = idle_seconds
         self.sessions: dict[str, SimulationSession] = {}
 
-    def create(self, seed: int = 0) -> SimulationSession:
+    def create(self, seed: int = 0, **options: str) -> SimulationSession:
         self.cleanup()
         if len(self.sessions) >= self.max_sessions:
             raise RuntimeError("SESSION_CAPACITY_REACHED")
-        session = SimulationSession(seed=seed)
+        session = SimulationSession(seed=seed, **options)
         self.sessions[session.id] = session
         return session
 
@@ -25,6 +25,12 @@ class SessionManager:
             raise KeyError(session_id)
         session.touch()
         return session
+
+    def delete(self, session_id: str) -> None:
+        session = self.sessions.pop(session_id, None)
+        if session is None:
+            raise KeyError(session_id)
+        session.stop()
 
     def cleanup(self) -> None:
         now = datetime.now(UTC)
@@ -36,4 +42,3 @@ class SessionManager:
         for session_id in expired:
             self.sessions[session_id].stop()
             del self.sessions[session_id]
-

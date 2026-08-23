@@ -1,0 +1,1 @@
+"""Isolated SmolVLA inference service."""

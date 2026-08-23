@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.agent.orchestrator import AgentOrchestrator
 from app.config import settings
@@ -30,6 +30,19 @@ rate_limits: dict[str, deque[float]] = defaultdict(deque)
 
 class CreateSessionRequest(BaseModel):
     seed: int = 0
+    robot: Literal["so101", "panda"] = "so101"
+    controller: Literal["classical", "vla", "hybrid"] = "vla"
+    brain: Literal["none", "gemini"] = "none"
+    policy: Literal["smolvla", "mock_vla"] = "smolvla"
+    grasp_mode: Literal["physics", "contact_attachment"] = "physics"
+
+    @model_validator(mode="after")
+    def validate_configuration(self) -> "CreateSessionRequest":
+        if self.robot == "panda" and self.controller != "classical":
+            raise ValueError("PANDA_ONLY_SUPPORTS_CLASSICAL")
+        if self.controller == "hybrid" and self.brain != "gemini":
+            raise ValueError("HYBRID_REQUIRES_GEMINI_BRAIN")
+        return self
 
 
 class RunTaskRequest(BaseModel):
@@ -58,21 +71,52 @@ def health() -> dict:
 
 @app.post("/api/sessions")
 def create_session(payload: CreateSessionRequest) -> dict:
+    if settings.public_vla_only and (
+        payload.robot != "so101"
+        or payload.controller != "vla"
+        or payload.brain != "none"
+        or payload.policy != "smolvla"
+        or payload.grasp_mode != "physics"
+    ):
+        raise HTTPException(status_code=403, detail="PUBLIC_DEMO_VLA_ONLY")
     try:
-        session = manager.create(payload.seed)
+        session = manager.create(
+            payload.seed,
+            robot=payload.robot,
+            controller=payload.controller,
+            brain=payload.brain,
+            policy=payload.policy,
+            grasp_mode=payload.grasp_mode,
+        )
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     return {
         "session_id": session.id,
-        "state": session.engine.state(),
+        "state": session.backend.get_state(),
         "model_provider": settings.model_provider,
+        "configuration": {
+            "robot": session.robot,
+            "controller": session.controller,
+            "brain": session.brain,
+            "policy": session.policy,
+            "grasp_mode": session.grasp_mode,
+        },
     }
 
 
 @app.get("/api/sessions/{session_id}")
 def session_state(session_id: str) -> dict:
     session = get_session(session_id)
-    return {"session_id": session.id, "state": session.engine.state()}
+    return {"session_id": session.id, "state": session.backend.get_state()}
+
+
+@app.delete("/api/sessions/{session_id}", status_code=204)
+def delete_session(session_id: str) -> Response:
+    try:
+        manager.delete(session_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND") from error
+    return Response(status_code=204)
 
 
 @app.get("/api/sessions/{session_id}/camera.png")
@@ -80,7 +124,7 @@ def session_camera(session_id: str, view: Literal["scene", "wrist"] = "scene") -
     session = get_session(session_id)
     return Response(
         content=base64.b64decode(
-            session.engine.camera_png_base64(camera=view, latch_observation=False)
+            session.backend.render_camera(view, latch_observation=False)
         ),
         media_type="image/png",
         headers={"Cache-Control": "no-store"},
@@ -100,7 +144,7 @@ async def run_task(session_id: str, payload: RunTaskRequest, request: Request) -
     if session.running_task and not session.running_task.done():
         raise HTTPException(status_code=409, detail="TASK_ALREADY_RUNNING")
     history.append(now)
-    session.tools = type(session.tools)(session.engine, max_steps=settings.max_agent_steps)
+    session.tools = type(session.tools)(session.backend, max_steps=settings.max_agent_steps)
     session.running_task = asyncio.create_task(orchestrator.run(session, payload.prompt))
     return {"accepted": True, "session_id": session.id}
 
@@ -129,7 +173,7 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
         return
     await websocket.accept()
     queue = session.subscribe()
-    await websocket.send_json({"type": "scene_state", "state": session.engine.state()})
+    await websocket.send_json({"type": "scene_state", "state": session.backend.get_state()})
     try:
         while True:
             payload = await queue.get()
