@@ -14,6 +14,23 @@ class SessionManager:
     def create(self, seed: int = 0, **options: str) -> SimulationSession:
         self.cleanup()
         if len(self.sessions) >= self.max_sessions:
+            disconnected = sorted(
+                (
+                    session
+                    for session in self.sessions.values()
+                    if not session.subscribers
+                    and (
+                        session.running_task is None
+                        or session.running_task.done()
+                    )
+                ),
+                key=lambda session: session.last_active,
+            )
+            if disconnected:
+                stale = disconnected[0]
+                stale.stop()
+                del self.sessions[stale.id]
+        if len(self.sessions) >= self.max_sessions:
             raise RuntimeError("SESSION_CAPACITY_REACHED")
         session = SimulationSession(seed=seed, **options)
         self.sessions[session.id] = session

@@ -67,6 +67,7 @@ class AgentOrchestrator:
         else:
             raise RuntimeError("UNKNOWN_VLA_PROVIDER")
         controller = VLAController(session.backend, provider)
+        policy_instruction = self.config.vla_task_prompt
         await session.publish(
             {
                 "type": "vla_observation",
@@ -78,9 +79,16 @@ class AgentOrchestrator:
                 "forbidden_features": ["object_xyz", "target_object_id", "ik_target"],
             }
         )
-        logger.event({"type": "vla", "provider": provider.name, "task": prompt})
+        logger.event(
+            {
+                "type": "vla",
+                "provider": provider.name,
+                "requested_task": prompt,
+                "policy_instruction": policy_instruction,
+            }
+        )
         for _ in range(self.config.vla_max_steps):
-            tick = await asyncio.to_thread(controller.tick, prompt)
+            tick = await asyncio.to_thread(controller.tick, policy_instruction)
             event = {
                 "type": "vla_action",
                 "provider": provider.name,
@@ -124,11 +132,17 @@ class AgentOrchestrator:
             else SmolVLAClient(self.config.vla_host)
         )
         controller = VLAController(session.backend, provider)
+        policy_instruction = self.config.vla_task_prompt
         await session.publish(
-            {"type": "vla_subtask", "instruction": instruction, "provider": provider.name}
+            {
+                "type": "vla_subtask",
+                "instruction": instruction,
+                "policy_instruction": policy_instruction,
+                "provider": provider.name,
+            }
         )
         for _ in range(self.config.vla_max_steps):
-            tick = await asyncio.to_thread(controller.tick, instruction)
+            tick = await asyncio.to_thread(controller.tick, policy_instruction)
             event = {
                 "type": "vla_action",
                 "provider": provider.name,

@@ -53,6 +53,23 @@ class ResetRequest(BaseModel):
     seed: int | None = None
 
 
+def public_configuration_allowed(
+    payload: CreateSessionRequest, *, allow_gemini: bool
+) -> bool:
+    common = (
+        payload.robot == "so101"
+        and payload.policy == "smolvla"
+        and payload.grasp_mode == "physics"
+    )
+    vla = payload.controller == "vla" and payload.brain == "none"
+    hybrid = (
+        allow_gemini
+        and payload.controller == "hybrid"
+        and payload.brain == "gemini"
+    )
+    return common and (vla or hybrid)
+
+
 def get_session(session_id: str):
     try:
         return manager.get(session_id)
@@ -71,12 +88,8 @@ def health() -> dict:
 
 @app.post("/api/sessions")
 def create_session(payload: CreateSessionRequest) -> dict:
-    if settings.public_vla_only and (
-        payload.robot != "so101"
-        or payload.controller != "vla"
-        or payload.brain != "none"
-        or payload.policy != "smolvla"
-        or payload.grasp_mode != "physics"
+    if settings.public_vla_only and not public_configuration_allowed(
+        payload, allow_gemini=settings.public_allow_gemini
     ):
         raise HTTPException(status_code=403, detail="PUBLIC_DEMO_VLA_ONLY")
     try:

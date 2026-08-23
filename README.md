@@ -189,3 +189,4 @@ legacy/reference code.
 | `MAX_SESSIONS` | `4` | Concurrent simulation sessions |
 | `TASKS_PER_HOUR` | `10` | Per-client task rate limit |
 | `PUBLIC_VLA_ONLY` | `false` | Restrict an exposed backend to SO-101 + SmolVLA and disable Gemini-backed modes |
+| `PUBLIC_ALLOW_GEMINI` | `false` | Allow rate-limited ER2 + SmolVLA sessions while public-demo restrictions remain active |

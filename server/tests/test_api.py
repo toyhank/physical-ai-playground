@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import CreateSessionRequest, app, public_configuration_allowed
+
+
+def test_public_configuration_can_allow_rate_limited_gemini_hybrid() -> None:
+    hybrid = CreateSessionRequest(controller="hybrid", brain="gemini")
+    assert public_configuration_allowed(hybrid, allow_gemini=True) is True
+    assert public_configuration_allowed(hybrid, allow_gemini=False) is False
+    assert public_configuration_allowed(
+        CreateSessionRequest(controller="classical"), allow_gemini=True
+    ) is False
 
 
 def test_health_and_session_lifecycle() -> None:

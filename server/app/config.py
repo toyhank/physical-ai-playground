@@ -35,6 +35,9 @@ class Settings:
         "true",
         "yes",
     }
+    public_allow_gemini: bool = os.getenv(
+        "PUBLIC_ALLOW_GEMINI", "false"
+    ).lower() in {"1", "true", "yes"}
     cors_origins: tuple[str, ...] = tuple(
         origin.strip()
         for origin in os.getenv(
